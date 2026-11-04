@@ -2,7 +2,8 @@
 // VTrend Base データ更新スクリプト
 // YouTube Data API v3（無料枠）から日本のトレンドを取得し、data.json を作る。
 // GitHub Actions が毎日0時過ぎ（日本時間）に自動実行する。
-// 1回の実行で使うのは約2,800ユニット（無料枠は1日10,000ユニット）。
+// 1回の実行で使うのは約6,500ユニット（無料枠は1日10,000ユニット）。
+// ※ 無料枠は太平洋時間0時（日本時間16時〜17時）にリセット。同じ枠内で手動実行を重ねると足りなくなるので注意。
 // =====================================================================
 import { readFile, writeFile } from 'node:fs/promises';
 
@@ -17,7 +18,6 @@ const GENRES = [
   { id: 'song',  kw: '歌ってみた', cat: '10' },
   { id: 'talk',  kw: '雑談',       cat: null },
   { id: 'plan',  kw: '企画',       cat: null },
-  { id: 'short', kw: '#shorts',    cat: null, short: true },
 ];
 const PERIODS = [1, 7, 30];
 const VPARTS = 'snippet,statistics,contentDetails,liveStreamingDetails';
@@ -45,9 +45,10 @@ const fromPrev = {};     // 取得に失敗して前回分を使う動画
 
 async function fetchVideos(ids) {
   const missing = ids.filter(id => !raw[id]);
-  if (!missing.length) return;
-  const j = await yt('videos', { part: VPARTS, id: missing.join(',') }, 1);
-  for (const it of j.items || []) raw[it.id] = it;
+  for (let i = 0; i < missing.length; i += 50) {
+    const j = await yt('videos', { part: VPARTS, id: missing.slice(i, i + 50).join(',') }, 1);
+    for (const it of j.items || []) raw[it.id] = it;
+  }
 }
 
 for (const vtOnly of [true, false]) {
@@ -64,13 +65,20 @@ for (const vtOnly of [true, false]) {
           sets[key] = (j.items || []).map(i => i.id);
         } else {
           const q = [vtOnly ? 'VTuber' : '', g.kw].filter(Boolean).join(' ') || 'VTuber';
-          const params = {
+          const base = {
             part: 'snippet', type: 'video', regionCode: 'JP', relevanceLanguage: 'ja', order: 'viewCount',
             publishedAfter: new Date(now - p * 864e5).toISOString(), maxResults: 50, q,
           };
-          if (g.short) params.videoDuration = 'short';
-          const j = await yt('search', params, 100);
-          const ids = (j.items || []).map(i => i.id && i.id.videoId).filter(Boolean);
+          // 「動画・配信・ショート」の形式フィルター用に、通常／配信アーカイブ／ショートを別々に検索して合体
+          const variants = [{}, { eventType: 'completed' }, { videoDuration: 'short' }];
+          const ids = [];
+          for (const extra of variants) {
+            const j = await yt('search', { ...base, ...extra }, 100);
+            for (const i of j.items || []) {
+              const id = i.id && i.id.videoId;
+              if (id && !ids.includes(id)) ids.push(id);
+            }
+          }
           await fetchVideos(ids);
           sets[key] = ids.filter(id => raw[id]);
         }
@@ -115,6 +123,7 @@ for (const [id, it] of Object.entries(raw)) {
     dur: isoDur(it.contentDetails && it.contentDetails.duration),
     thumb: (t.medium || t.default || {}).url || '',
     live: live ? +live : null,
+    stream: !!it.liveStreamingDetails, // ライブ配信（アーカイブ・配信中・予定）なら true
   };
 }
 

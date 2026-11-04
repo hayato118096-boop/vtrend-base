@@ -121,7 +121,7 @@ const S = {
   tab: store.get('vtb_tab', 'trend'),
   data: null,
   mode: 'demo',
-  genre: 'all', sort: 'ratio', period: 7, vtOnly: true,
+  genre: 'all', format: 'all', sort: 'ratio', period: 7, vtOnly: true,
   videos: [], loading: false, error: '', note: '',
   q: '',
   arch: { year:'all', genre:'all', type:'all', revival:'all', sort:'new' },
@@ -137,7 +137,6 @@ const GENRES = [
   { id:'song',  label:'歌ってみた', kw:'歌ってみた', cat:'10' },
   { id:'talk',  label:'雑談',       kw:'雑談',       cat:null },
   { id:'plan',  label:'企画',       kw:'企画',       cat:null },
-  { id:'short', label:'ショート',   kw:'#shorts',    cat:null, short:true },
 ];
 const SORTS = [
   { id:'ratio',  label:'伸び率（再生÷登録者）' },
@@ -164,7 +163,8 @@ async function loadData() {
     Object.values(d.videos).forEach(v => {
       v.published = new Date(v.published);
       v.url = 'https://www.youtube.com/watch?v=' + v.id;
-      v.isShort = v.dur > 0 && v.dur <= 180;
+      v.stream = !!v.stream || v.live != null;
+      v.isShort = !v.stream && v.dur > 0 && v.dur <= 180;
     });
     S.data = d; S.mode = 'live';
   } catch (e) { S.data = null; S.mode = 'demo'; }
@@ -206,9 +206,9 @@ function demoData() {
       id: 'demo-' + i, title, ch: c.name, chId: c.id, subs: c.subs, views,
       likes: Math.round(views * (0.025 + r()*0.06)), comments: Math.round(views * (0.002 + r()*0.01)),
       published: new Date(Date.now() - r()*30*864e5), dur: genre === 'short' ? 20 + Math.round(r()*40) : 600 + Math.round(r()*9000),
-      thumb: '', isShort: genre === 'short',
+      thumb: '', isShort: genre === 'short', stream: genre !== 'short' && genre !== 'song' && (isLive || r() < 0.45),
       live: isLive ? Math.round(c.subs * (0.01 + r()*0.05)) : null,
-      genre, url: ytSearchUrl(title), demo: true,
+      genre: genre === 'short' ? ['game','talk','plan'][Math.floor(r()*3)] : genre, url: ytSearchUrl(title), demo: true,
     });
   }
   return vids;
@@ -230,14 +230,25 @@ function pickVideos() {
   }
 }
 const ratioOf = v => v.subs ? v.views / v.subs : null;
-function trendList() {
+const FORMATS = [
+  { id:'all',    label:'すべて' },
+  { id:'video',  label:'🎬 動画' },
+  { id:'stream', label:'🔴 配信' },
+  { id:'short',  label:'📱 ショート' },
+];
+const fmtOf = v => v.stream ? 'stream' : v.isShort ? 'short' : 'video';
+function baseList() {
   let list = S.videos.slice();
   if (S.mode === 'demo') {
     list = list.filter(v => (Date.now() - v.published) <= S.period*864e5);
-    if (S.genre === 'short') list = list.filter(v => v.isShort);
-    else if (S.genre !== 'all') list = list.filter(v => v.genre === S.genre);
+    if (S.genre !== 'all') list = list.filter(v => v.genre === S.genre);
   }
   if (S.q) { const q = S.q.toLowerCase(); list = list.filter(v => (v.title + v.ch).toLowerCase().includes(q)); }
+  return list;
+}
+function trendList() {
+  let list = baseList();
+  if (S.format !== 'all') list = list.filter(v => fmtOf(v) === S.format);
   const key = { ratio: v => ratioOf(v) ?? -1, views: v => v.views, new: v => +v.published, engage: v => v.views ? v.likes / v.views : 0 }[S.sort];
   return list.sort((a, b) => key(b) - key(a));
 }
@@ -265,11 +276,17 @@ function renderTrend() {
   const lives = list.filter(v => v.live != null);
   const picks = list.filter(v => ratioOf(v) != null && v.views >= 500).sort((a,b) => ratioOf(b) - ratioOf(a)).slice(0, 3);
   const chartMode = S.mode === 'live' && isChart(S.genre, S.vtOnly);
+  const all = S.loading ? [] : baseList();
+  const counts = { all: all.length, video: 0, stream: 0, short: 0 };
+  all.forEach(v => counts[fmtOf(v)]++);
 
   el.innerHTML = `
   <div class="flex flex-col gap-3 mb-4">
     <div class="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4">
       ${GENRES.map(g => `<button class="chip shrink-0 border border-line rounded-full px-4 py-1.5 text-sm font-bold bg-panel hover:border-neon/50" data-genre="${g.id}" aria-pressed="${S.genre === g.id}">${g.label}</button>`).join('')}
+    </div>
+    <div class="flex bg-panel border border-line rounded-xl p-1 w-full sm:w-fit" role="group" aria-label="形式">
+      ${FORMATS.map(f => `<button class="flex-1 sm:flex-none whitespace-nowrap px-2 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition ${S.format === f.id ? 'bg-ink text-white shadow' : 'text-muted hover:text-ink'}" data-format="${f.id}" aria-pressed="${S.format === f.id}">${f.label}<span class="ml-1 text-[10px] font-mono opacity-70">${counts[f.id]}</span></button>`).join('')}
     </div>
     <div class="flex flex-wrap items-center gap-2 text-sm">
       <select id="sortSel" class="bg-panel border border-line rounded-lg px-3 py-1.5">
@@ -333,6 +350,7 @@ function trendRow(v, i) {
     <a href="${esc(v.url)}" target="_blank" rel="noopener" class="relative shrink-0">
       ${thumbHTML(v, 'w-24 sm:w-40 aspect-video rounded-lg')}
       ${v.isShort ? '<span class="absolute bottom-1 left-1 bg-pink text-white text-[9px] font-bold px-1 rounded">SHORT</span>' : ''}
+      ${v.stream && v.live == null ? '<span class="absolute bottom-1 left-1 bg-ink/80 text-white text-[9px] font-bold px-1 rounded">配信</span>' : ''}
       ${v.live != null ? '<span class="absolute bottom-1 left-1 bg-red-600 text-white text-[9px] font-bold px-1 rounded">LIVE</span>' : ''}
     </a>
     <div class="flex-1 min-w-0">
@@ -629,7 +647,7 @@ $$('.tab').forEach(t => t.onclick = () => { S.tab = t.dataset.tab; store.set('vt
 let qT; $('#q').addEventListener('input', e => { clearTimeout(qT); qT = setTimeout(() => { S.q = e.target.value.trim(); if (S.tab === 'know') S.kopen = null; render(); }, 150); });
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-genre],[data-arch],[data-kcat],[data-kopen],[data-bm-trend],[data-bm-arch],[data-bm-know]');
+  const t = e.target.closest('[data-format],[data-genre],[data-arch],[data-kcat],[data-kopen],[data-bm-trend],[data-bm-arch],[data-bm-know]');
   if (!t) return;
   if (t.dataset.bmTrend !== undefined) {
     e.preventDefault(); e.stopPropagation();
@@ -640,6 +658,7 @@ document.addEventListener('click', e => {
   }
   if (t.dataset.bmArch !== undefined) { e.stopPropagation(); const id = t.dataset.bmArch; BM.arch[id] ? delete BM.arch[id] : BM.arch[id] = 1; toast(BM.arch[id] ? '★ 保存しました' : 'ブックマークを外しました'); saveBM(); return render(); }
   if (t.dataset.bmKnow !== undefined) { e.stopPropagation(); const id = t.dataset.bmKnow; BM.know[id] ? delete BM.know[id] : BM.know[id] = 1; toast(BM.know[id] ? '★ 保存しました' : 'ブックマークを外しました'); saveBM(); return render(); }
+  if (t.dataset.format) { S.format = t.dataset.format; return renderTrend(); }
   if (t.dataset.genre) { S.genre = t.dataset.genre; pickVideos(); return renderTrend(); }
   if (t.dataset.arch) { const k = t.dataset.arch; S.arch[k] = k === 'year' && t.dataset.val !== 'all' ? +t.dataset.val : t.dataset.val; return renderArchive(); }
   if (t.dataset.kcat) { S.kcat = t.dataset.kcat; return renderKnow(); }
