@@ -7,9 +7,8 @@
 <script src="https://cdn.tailwindcss.com/3.4.16"></script>
 <script>
 tailwind.config = {
-  darkMode: 'class',
   theme: { extend: {
-    colors: { void:'#f5f7fb', ink:'#1f2433', panel:'#ffffff', panel2:'#ffffff', line:'#e2e6ef', neon:'#0891b2', pink:'#db2777', lime:'#4d7c0f', amber:'#d97706', muted:'#6b7280' },
+    colors: { void:'#f5f7fb', ink:'#1f2433', panel:'#ffffff', line:'#e2e6ef', neon:'#0891b2', pink:'#db2777', lime:'#4d7c0f', amber:'#d97706', muted:'#6b7280' },
     fontFamily: { sans:['"Noto Sans JP"','system-ui','sans-serif'], mono:['"JetBrains Mono"','ui-monospace','monospace'] }
   } }
 };
@@ -17,7 +16,8 @@ tailwind.config = {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 <style>
-  body { background:#f5f7fb; color:#1f2433; overflow-x:hidden; }
+  :root { --bg:#f5f7fb; --fg:#1f2433; }
+  body { background:var(--bg); color:var(--fg); overflow-x:hidden; }
   .grid-bg { background-image:
       linear-gradient(rgba(8,145,178,.05) 1px, transparent 1px),
       linear-gradient(90deg, rgba(8,145,178,.05) 1px, transparent 1px);
@@ -32,12 +32,15 @@ tailwind.config = {
   .line-clamp-2 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .line-clamp-3 { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
   input, select { color-scheme: light; }
+  .clickable { cursor:pointer; }
+  .clickable:hover { border-color: rgba(8,145,178,.45); }
+  #modal .sheet { max-height: calc(100vh - 32px); }
+  @media (max-width: 639px) { #modal .sheet { max-height: calc(100vh - 12px); } }
 </style>
 </head>
 <body class="font-sans min-h-screen grid-bg">
 
-<!-- ============ HEADER ============ -->
-<header class="sticky top-0 z-30 bg-void/85 backdrop-blur border-b border-line">
+<header class="sticky top-0 z-30 bg-void/90 backdrop-blur border-b border-line">
   <div class="max-w-7xl mx-auto px-4 pt-3 flex items-center gap-3">
     <div class="flex items-center gap-2 shrink-0">
       <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-neon to-pink grid place-items-center font-black text-white">V</div>
@@ -58,21 +61,38 @@ tailwind.config = {
     </div>
   </div>
   <nav class="max-w-7xl mx-auto px-2 mt-2 flex overflow-x-auto no-scrollbar" role="tablist">
+    <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="rising" role="tab">🌱 伸び盛り</button>
     <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="trend" role="tab">📈 トレンド</button>
-    <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="archive" role="tab">🗂 過去の流行</button>
+    <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="words" role="tab">🔍 <span class="hidden sm:inline">検索</span>ワード</button>
+    <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="content" role="tab">🔥 コンテンツ</button>
     <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="know" role="tab">🌐 <span class="hidden sm:inline">解説</span>ナレッジ</button>
-    <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="bm" role="tab">★ <span class="hidden sm:inline">ブックマーク</span><span class="sm:hidden">保存</span> <span id="bmCount" class="ml-1 text-[10px] font-mono bg-pink/20 text-pink rounded px-1.5 py-0.5">0</span></button>
+    <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="bm" role="tab">★ <span class="hidden sm:inline">ブックマーク</span><span class="sm:hidden">保存</span> <span id="bmCount" class="ml-1 text-[10px] font-mono bg-pink/15 text-pink rounded px-1.5 py-0.5">0</span></button>
   </nav>
 </header>
 
 <main class="max-w-7xl mx-auto px-4 py-5 pb-20">
-  <section id="view-trend" class="view"></section>
-  <section id="view-archive" class="view hidden"></section>
+  <section id="view-rising" class="view"></section>
+  <section id="view-trend" class="view hidden"></section>
+  <section id="view-words" class="view hidden"></section>
+  <section id="view-content" class="view hidden"></section>
   <section id="view-know" class="view hidden"></section>
   <section id="view-bm" class="view hidden"></section>
 </main>
 
-<div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-panel2 border border-neon/40 text-sm rounded-full shadow-lg px-4 py-2 glow opacity-0 pointer-events-none transition-opacity"></div>
+<!-- ポップアウト -->
+<div id="modal" class="fixed inset-0 z-50 hidden">
+  <div class="absolute inset-0 bg-black/40" data-close></div>
+  <div class="sheet relative mx-auto mt-2 sm:mt-4 w-[calc(100%-12px)] sm:w-[calc(100%-32px)] max-w-2xl bg-panel border border-line rounded-2xl glow overflow-y-auto">
+    <div class="sticky top-0 z-10 bg-panel/95 backdrop-blur border-b border-line px-4 py-2.5 flex items-center gap-2">
+      <button id="mBack" class="hidden text-sm text-muted hover:text-neon">← 戻る</button>
+      <div id="mTitle" class="font-bold text-sm truncate flex-1"></div>
+      <button data-close class="text-muted hover:text-ink text-2xl leading-none px-1" aria-label="閉じる">×</button>
+    </div>
+    <div id="mBody" class="p-4"></div>
+  </div>
+</div>
+
+<div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] bg-panel border border-neon/40 text-sm rounded-full px-4 py-2 glow shadow-lg opacity-0 pointer-events-none transition-opacity"></div>
 
 <script>
 /* =====================================================================
@@ -84,7 +104,6 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
-  del(k) { try { localStorage.removeItem(k); } catch (e) {} }
 };
 const fmt = n => {
   if (n == null || isNaN(n)) return '—';
@@ -92,6 +111,7 @@ const fmt = n => {
   if (n >= 1e4) return (n/1e4).toFixed(n >= 1e5 ? 0 : 1).replace(/\.0$/,'') + '万';
   return Math.round(n).toLocaleString('ja-JP');
 };
+const DAY = 864e5;
 const rtf = new Intl.RelativeTimeFormat('ja', { numeric:'auto' });
 const ago = d => {
   const s = (d - Date.now()) / 1000, a = Math.abs(s);
@@ -101,284 +121,420 @@ const ago = d => {
   return rtf.format(Math.round(s/86400/30), 'month');
 };
 const ytSearchUrl = q => 'https://www.youtube.com/results?search_query=' + encodeURIComponent(q);
+// タッチ端末（スマホ・タブレット）はリンクで開く。PCは埋め込み先でリンクがブロックされるのでコピー方式
+const TOUCH = window.matchMedia && matchMedia('(pointer: coarse)').matches;
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.style.opacity = 1;
-  clearTimeout(toast._t); toast._t = setTimeout(() => t.style.opacity = 0, 1600);
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.style.opacity = 0, 1800);
+}
+async function copyText(text, msg = 'コピーしました') {
+  try { await navigator.clipboard.writeText(text); return toast('📋 ' + msg); } catch (e) {}
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  let ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+  ta.remove();
+  toast(ok ? '📋 ' + msg : '下の欄を選択してコピーしてね');
 }
 function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function median(a) { if (!a.length) return null; const s = a.slice().sort((x,y)=>x-y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2; }
 function spark(arr, w=72, h=22) {
-  if (!arr || arr.length < 2) return '<span class="text-[10px] text-muted">推移データ蓄積中</span>';
+  arr = (arr || []).filter(x => x != null);
+  if (arr.length < 2) return '<span class="text-[10px] text-muted">推移データ蓄積中</span>';
   const min = Math.min(...arr), max = Math.max(...arr), r = max - min || 1;
   const pts = arr.map((v,i) => `${(i/(arr.length-1)*w).toFixed(1)},${(h - (v-min)/r*(h-4) - 2).toFixed(1)}`).join(' ');
-  const up = arr[arr.length-1] >= arr[0];
-  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${up ? '#16a34a' : '#db2777'}" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${arr[arr.length-1] >= arr[0] ? '#16a34a' : '#db2777'}" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+}
+
+/* リンク：スマホは開く、PCはURLとコピー */
+function linkBox(url, label = 'YouTubeで開く') {
+  const open = TOUCH ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="block text-center bg-neon text-white font-bold rounded-lg px-4 py-2.5 text-sm mb-2">▶ ${esc(label)}</a>` : '';
+  return `${open}<div class="flex gap-2">
+    <input readonly value="${esc(url)}" class="flex-1 min-w-0 bg-void border border-line rounded-lg px-2 py-2 text-xs font-mono" data-selectall>
+    <button class="shrink-0 ${TOUCH ? 'border border-line' : 'bg-neon text-white'} font-bold rounded-lg px-3 text-xs" data-copy="${esc(url)}">📋 コピー</button>
+  </div>`;
+}
+function miniLink(url, text) {
+  return TOUCH
+    ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="text-xs text-neon font-bold hover:underline">▶ ${esc(text)}</a>`
+    : `<button class="text-xs text-neon font-bold hover:underline" data-copy="${esc(url)}" data-copymsg="URLをコピーしました">📋 ${esc(text)}のURLをコピー</button>`;
 }
 
 /* =====================================================================
-   1. 状態
+   1. 定数
    ===================================================================== */
-const S = {
-  tab: store.get('vtb_tab', 'trend'),
-  data: null,
-  mode: 'demo',
-  genre: 'all', format: 'all', sort: 'ratio', period: 7, vtOnly: true,
-  videos: [], loading: false, error: '', note: '',
-  q: '',
-  arch: { year:'all', genre:'all', type:'all', revival:'all', sort:'new' },
-  kcat: 'all', kopen: null,
-};
-let BM = store.get('vtb_bm', { trend:{}, arch:{}, know:{} });
-const saveBM = () => { store.set('vtb_bm', BM); updateBMCount(); };
-const updateBMCount = () => { $('#bmCount').textContent = Object.keys(BM.trend).length + Object.keys(BM.arch).length + Object.keys(BM.know).length; };
-
 const GENRES = [
-  { id:'all',   label:'すべて',     kw:'',          cat:null },
-  { id:'game',  label:'ゲーム',     kw:'ゲーム実況', cat:'20' },
-  { id:'song',  label:'歌ってみた', kw:'歌ってみた', cat:'10' },
-  { id:'talk',  label:'雑談',       kw:'雑談',       cat:null },
-  { id:'plan',  label:'企画',       kw:'企画',       cat:null },
+  { id:'all',  label:'すべて' },
+  { id:'game', label:'ゲーム' },
+  { id:'song', label:'歌ってみた' },
+  { id:'talk', label:'雑談' },
+  { id:'plan', label:'企画' },
 ];
-const SORTS = [
-  { id:'ratio',  label:'伸び率（再生÷登録者）' },
-  { id:'views',  label:'再生数' },
-  { id:'new',    label:'新しい順' },
-  { id:'engage', label:'高評価率' },
-];
-
-/* =====================================================================
-   2. データ取得：data.json
-   GitHub Actions（scripts/update.mjs）が毎日0時過ぎ（日本時間）に生成する。
-   見つからないとき（ローカルで開いた時など）はサンプルデータを表示。
-   ===================================================================== */
-const DATA_URL = 'data.json';
-const isChart = (gid, vtOnly) => !vtOnly && (gid === 'all' || !!(GENRES.find(g => g.id === gid) || {}).cat);
-const setKey = () => [S.genre, isChart(S.genre, S.vtOnly) ? 'chart' : S.period, S.vtOnly ? 1 : 0].join('|');
-async function loadData() {
-  try {
-    const day = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10); // 日本時間の日付が変わったら取り直す
-    const r = await fetch(DATA_URL + '?d=' + day, { cache: 'no-cache' });
-    if (!r.ok) throw new Error(r.status);
-    const d = await r.json();
-    if (!d.sets || !d.videos) throw new Error('bad data');
-    Object.values(d.videos).forEach(v => {
-      v.published = new Date(v.published);
-      v.url = 'https://www.youtube.com/watch?v=' + v.id;
-      v.stream = !!v.stream || v.live != null;
-      v.isShort = !v.stream && v.dur > 0 && v.dur <= 180;
-    });
-    S.data = d; S.mode = 'live';
-  } catch (e) { S.data = null; S.mode = 'demo'; }
-}
-/* =====================================================================
-   3. データ取得：DEMO（架空のサンプル）
-   ===================================================================== */
-const DEMO_HIST = {};
-function demoData() {
-  const r = rng(20261104);
-  const chans = [
-    ['星宮ルナ',1420000],['黒羽ネオ',860000],['白雪ミント',412000],['鳴神カグラ',238000],['月見里ユウ',156000],
-    ['猫宮ぽぷら',98000],['天ヶ瀬ソラ',71000],['夜桜しずく',52000],['雷堂ジン',34000],['花咲ここ',21000],
-    ['氷室アオイ',14800],['灯火リラ',9200],['紫苑メイ',6100],['朝霧ハル',4300],['狐火こはく',2900],
-    ['碧海ナギ',188000],['七瀬ルル',27000],['鉄塚ゴウ',11500],
-  ].map(([name, subs], i) => ({ name, subs, id:'demo-ch-'+i }));
-  chans.forEach(c => {
-    const g = 0.002 + r()*0.02; let n = c.subs / Math.pow(1+g, 14);
-    DEMO_HIST[c.id] = Array.from({length:15}, () => { const v = Math.round(n); n *= 1 + g*(0.4 + r()*1.2); return v; });
-    DEMO_HIST[c.id][14] = c.subs;
-  });
-  const T = {
-    game:  ['【PEAK】4人で山頂を目指したら友情が崩壊した','【初見ホラー】叫ばずに完走できたら勝ち','【マリオカート ワールド】視聴者参加型！1位取るまで終われない','【スト6】ランクマ耐久 ダイヤ行くまで寝れない','【R.E.P.O.】ポンコツ回収班、出動します','【異変探し】1つも見逃さずにクリアする','【Minecraft】サーバーに巨大建築つくる','【雀魂】初心者がコラボ麻雀で役満を狙う'],
-    song:  ['【歌ってみた】メズマライザー / cover','【歌枠】リクエスト全部歌う耐久','【オリジナル曲】初のオリ曲MV公開','【歌ってみた】ラビットホール / cover','【歌ってみた】ハモリ全部ひとりで録った','【歌枠リレー】トップバッター'],
-    talk:  ['【雑談】マシュマロ読みながらまったり','【朝活】おはようを言いに来て','【雑談】登録者ありがとう振り返り','【作業雑談】一緒に作業しよ','【雑談】最近ハマってるもの全部話す'],
-    plan:  ['【企画】リスナーの黒歴史を発表する会','【凸待ち】誰か来てくれるまで終われない','【企画】100人に聞いたランキングを当てる','【3D】初お披露目、何でもやります','【企画】1日を視聴者に決めてもらう'],
-    short: ['声だけで何のゲームか当てて #shorts','この反応は本物です #Vtuber','1秒で落ちる人の特徴 #shorts','配信中に起きた奇跡 #shorts','先輩に絶対言っちゃダメなこと #shorts','このサムネで何が起きたか分かる？ #shorts'],
-  };
-  const gs = Object.keys(T), vids = [];
-  for (let i = 0; i < 160; i++) {
-    const genre = gs[Math.floor(r()*gs.length)], c = chans[Math.floor(r()*chans.length)];
-    const title = T[genre][Math.floor(r()*T[genre].length)];
-    let mult = Math.exp((r() - 0.62) * 2.6);           // だいたい登録者の0.1〜2倍
-    if (r() < 0.12) mult *= 4 + r()*10;                 // たまにバズる
-    if (genre === 'short') mult *= 2.2;
-    const views = Math.max(120, Math.round(c.subs * mult * (c.subs < 30000 ? 1.4 : 0.5)));
-    const isLive = genre !== 'short' && genre !== 'song' && r() < 0.12;
-    vids.push({
-      id: 'demo-' + i, title, ch: c.name, chId: c.id, subs: c.subs, views,
-      likes: Math.round(views * (0.025 + r()*0.06)), comments: Math.round(views * (0.002 + r()*0.01)),
-      published: new Date(Date.now() - r()*30*864e5), dur: genre === 'short' ? 20 + Math.round(r()*40) : 600 + Math.round(r()*9000),
-      thumb: '', isShort: genre === 'short', stream: genre !== 'short' && genre !== 'song' && (isLive || r() < 0.45),
-      live: isLive ? Math.round(c.subs * (0.01 + r()*0.05)) : null,
-      genre: genre === 'short' ? ['game','talk','plan'][Math.floor(r()*3)] : genre, url: ytSearchUrl(title), demo: true,
-    });
-  }
-  return vids;
-}
-
-/* =====================================================================
-   4. トレンド タブ
-   ===================================================================== */
-function pickVideos() {
-  if (S.mode === 'live') {
-    S.videos = (S.data.sets[setKey()] || []).map(id => S.data.videos[id]).filter(Boolean);
-    const g = GENRES.find(x => x.id === S.genre);
-    S.note = isChart(S.genre, S.vtOnly) ? `日本の急上昇チャート（${g.label}）`
-      : `「${[S.vtOnly ? 'VTuber' : '', g.kw].filter(Boolean).join(' ') || 'VTuber'}」直近${S.period === 1 ? '24時間' : S.period + '日'}・再生数順`;
-  } else {
-    if (!S._demo) S._demo = demoData();
-    S.videos = S._demo;
-    S.note = 'サンプルデータを表示中（data.json が見つかりません）';
-  }
-}
-const ratioOf = v => v.subs ? v.views / v.subs : null;
 const FORMATS = [
   { id:'all',    label:'すべて' },
   { id:'video',  label:'🎬 動画' },
   { id:'stream', label:'🔴 配信' },
   { id:'short',  label:'📱 ショート' },
 ];
-const fmtOf = v => v.stream ? 'stream' : v.isShort ? 'short' : 'video';
-function baseList() {
-  let list = S.videos.slice();
-  if (S.mode === 'demo') {
-    list = list.filter(v => (Date.now() - v.published) <= S.period*864e5);
-    if (S.genre !== 'all') list = list.filter(v => v.genre === S.genre);
+const FMT_LABEL = { video:'動画', stream:'配信', short:'ショート' };
+const SORTS = [
+  { id:'ratio',  label:'伸び率（再生÷登録者）' },
+  { id:'views',  label:'再生数' },
+  { id:'new',    label:'新しい順' },
+  { id:'engage', label:'高評価率' },
+];
+const CAPS = [[10000,'〜1万人'],[50000,'〜5万人'],[100000,'〜10万人'],[200000,'〜20万人']];
+const ST = { new:['✨ 新登場','text-pink border-pink/40 bg-pink/10'], up:['🔥 急上昇','text-amber border-amber/40 bg-amber/10'], steady:['📈 継続中','text-neon border-neon/40 bg-neon/10'], down:['↘ 落ち着き','text-muted border-line bg-ink/5'] };
+const STOP = new Set(['vtuber','vtubers','新人vtuber','個人vtuber','vtuber準備中','新人vtuber準備中','shorts','short','ショート','切り抜き','ホロライブ','にじさんじ','hololive','nijisanji','ぶいすぽ','歌ってみた','cover','covered by','歌枠','雑談','雑談配信','ゲーム実況','実況','初見','初見プレイ','初見実況','ネタバレ注意','縦型配信','縦型','配信','live','ライブ配信','生配信','新人','おすすめ','fyp','viral','女性実況','男性vtuber','女性vtuber','vtuber好きと繋がりたい','jpvtuber','envtuber','music','mv','ゲーム','企画','shorts動画','youtube','youtubeshorts','ytshorts','trending','funny','anime','アニメ','live2d','3d','asmr配信']);
+function tokenize(title) {
+  const t = String(title || '').normalize('NFKC'), out = new Map();
+  const add = w => { w = w.trim().replace(/\s+/g, ' '); const k = w.toLowerCase();
+    if (w.length < 2 || w.length > 24 || /^[\d\s.\-#]+$/.test(w) || STOP.has(k) || k.endsWith('切り抜き') || k.startsWith('vtuber')) return;
+    if (!out.has(k)) out.set(k, w); };
+  for (const m of t.matchAll(/【([^】]+)】/g)) m[1].split(/[\/|・,、]/).forEach(add);
+  for (const m of t.matchAll(/『([^』]+)』/g)) add(m[1]);
+  for (const m of t.matchAll(/#([^\s#]+)/g)) add(m[1]);
+  return out;
+}
+
+/* =====================================================================
+   2. 状態
+   ===================================================================== */
+const S = {
+  tab: store.get('vtb_tab2', 'rising'),
+  data: null, mode: 'demo',
+  genre: 'all', format: 'all', period: 7, sort: 'ratio', cap: 200000,
+  q: '',
+  kw: { src: 'tokens', genre: 'all' },
+  ct: { tab: 'now', genre: 'all', format: 'all' },
+  arch: { year:'all', genre:'all', type:'all', revival:'all', sort:'new' },
+  kcat: 'all', kopen: null,
+};
+let BM = store.get('vtb_bm2', null);
+if (!BM) { const o = store.get('vtb_bm', {}); BM = { v: o.trend || {}, arch: o.arch || {}, know: o.know || {} }; }
+const saveBM = () => { store.set('vtb_bm2', BM); updateBMCount(); };
+const updateBMCount = () => { $('#bmCount').textContent = Object.keys(BM.v).length + Object.keys(BM.arch).length + Object.keys(BM.know).length; };
+
+/* =====================================================================
+   3. データ読み込み（data.json は GitHub Actions が毎日0時過ぎに生成）
+   ===================================================================== */
+function enrich(v) {
+  v.published = new Date(v.published);
+  v.url = 'https://www.youtube.com/watch?v=' + v.id;
+  v.thumb = v.demo ? '' : `https://i.ytimg.com/vi/${v.id}/mqdefault.jpg`;
+  v.stream = !!v.stream || v.live != null;
+  v.fmt = v.stream ? 'stream' : (v.dur > 0 && v.dur <= 180 ? 'short' : 'video');
+  v.ratio = v.subs ? v.views / v.subs : null;
+  return v;
+}
+async function loadData() {
+  try {
+    const d8 = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+    const r = await fetch('data.json?d=' + d8, { cache: 'no-cache' });
+    if (!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    if (!d.pools) throw new Error('old format');
+    Object.values(d.videos).forEach(enrich);
+    S.data = d; S.mode = 'live';
+  } catch (e) { S.data = demoData(); S.mode = 'demo'; }
+}
+
+/* 架空のサンプル（data.json が無いときだけ使用） */
+function demoData() {
+  const r = rng(20261104);
+  const chans = ['星宮ルナ','黒羽ネオ','白雪ミント','鳴神カグラ','月見里ユウ','猫宮ぽぷら','天ヶ瀬ソラ','夜桜しずく','雷堂ジン','花咲ここ','氷室アオイ','灯火リラ','紫苑メイ','朝霧ハル','狐火こはく','碧海ナギ','七瀬ルル','鉄塚ゴウ']
+    .map((name, i) => ({ name, id:'demo-ch-'+i, subs: Math.round(Math.exp(7.5 + r()*7)) }));
+  const T = {
+    game: ['【PEAK】4人で山頂を目指したら友情が崩壊した','【R.E.P.O.】ポンコツ回収班、出動します','【マリオカート ワールド】視聴者参加型！','【スト6】ランクマ耐久','【初見ホラー】叫ばずに完走できたら勝ち','【Minecraft】巨大建築つくる','【PEAK】ついに山頂へ #PEAK'],
+    song: ['【歌ってみた】メズマライザー / cover','【歌枠】リクエスト全部歌う耐久','【オリジナル曲】初MV公開','【歌ってみた】ラビットホール / cover'],
+    talk: ['【雑談】マシュマロ読みながらまったり','【朝活】おはようを言いに来て','【雑談】最近ハマってるもの全部話す','【作業雑談】一緒に作業しよ'],
+    plan: ['【凸待ち】誰か来てくれるまで終われない','【企画】100人に聞いたランキングを当てる','【3D】初お披露目','【企画】1日を視聴者に決めてもらう'],
+  };
+  const gs = Object.keys(T), videos = {};
+  for (let i = 0; i < 420; i++) {
+    const genre = gs[Math.floor(r()*gs.length)], c = chans[Math.floor(r()*chans.length)];
+    const fmtR = r(), f = fmtR < 0.4 ? 'video' : fmtR < 0.7 ? 'stream' : 'short';
+    const title = T[genre][Math.floor(r()*T[genre].length)] + (f === 'short' ? ' #shorts' : '');
+    let mult = Math.exp((r() - 0.6) * 2.6); if (r() < 0.12) mult *= 4 + r()*10;
+    const views = Math.max(120, Math.round(c.subs * mult * (c.subs < 30000 ? 1.4 : 0.5)));
+    videos['demo-'+i] = enrich({ id:'demo-'+i, title, ch:c.name, chId:c.id, subs:c.subs, views,
+      likes: Math.round(views*(0.025+r()*0.06)), comments: Math.round(views*(0.002+r()*0.01)),
+      published: new Date(Date.now() - r()*30*DAY).toISOString(), dur: f === 'short' ? 30 : 900 + Math.round(r()*5000),
+      stream: f === 'stream', live: f === 'stream' && r() < 0.1 ? Math.round(c.subs*0.03) : null, demo:true, genre });
   }
-  if (S.q) { const q = S.q.toLowerCase(); list = list.filter(v => (v.title + v.ch).toLowerCase().includes(q)); }
-  return list;
+  const all = Object.values(videos), pools = {};
+  for (const g of GENRES) for (const f of ['video','stream','short']) {
+    const base = all.filter(v => (g.id === 'all' || v.genre === g.id) && v.fmt === f);
+    pools[`${g.id}|${f}|7`] = base.filter(v => Date.now() - v.published < 7*DAY).sort((a,b) => b.views - a.views).slice(0, 100).map(v => v.id);
+    pools[`${g.id}|${f}|30`] = base.sort((a,b) => b.views - a.views).slice(0, 50).map(v => v.id);
+    pools[`${g.id}|${f}|new`] = base.filter(v => Date.now() - v.published < 7*DAY).sort((a,b) => b.published - a.published).slice(0, 50).map(v => v.id);
+  }
+  const tokens = {};
+  for (const g of GENRES) {
+    const agg = new Map();
+    all.filter(v => g.id === 'all' || v.genre === g.id).forEach(v => tokenize(v.title).forEach((w, k) => { const a = agg.get(k) || { k, w, ids: [] }; a.ids.push(v.id); agg.set(k, a); }));
+    tokens[g.id] = [...agg.values()].map(a => ({ k:a.k, w:a.w, n:a.ids.length, views:a.ids.reduce((s,id) => s + videos[id].views, 0),
+      st:['new','up','steady','down'][Math.floor(r()*4)], fm:{video:0,stream:0,short:0}, top:a.ids.sort((x,y) => videos[y].views - videos[x].views).slice(0,12) }))
+      .sort((a,b) => b.n - a.n);
+  }
+  const subs = {}; chans.forEach(c => { let n = c.subs * 0.95; subs[c.id] = Array.from({length:14}, () => Math.round(n *= 1 + r()*0.006)); subs[c.id][13] = c.subs; });
+  const suggest = {}; GENRES.forEach(g => suggest[g.id] = ['vtuber peak','vtuber repo','vtuber 歌ってみた メズマライザー','vtuber マリカ 参加型','vtuber 雑談 作業用','vtuber ホラー 絶叫','vtuber 3d お披露目'].map((w,i) => ({ w, s: 200 - i*20 })));
+  return { updated: new Date().toISOString(), pools, videos, subs, histDays: [], tokens, suggest,
+    gtrends: [{ w:'サンプルワード', traffic:'10万+', news:'サンプルのニュース見出し' }], aiBuzz:{}, aiTok:{}, know:{} };
 }
-function trendList() {
-  let list = baseList();
-  if (S.format !== 'all') list = list.filter(v => fmtOf(v) === S.format);
-  const key = { ratio: v => ratioOf(v) ?? -1, views: v => v.views, new: v => +v.published, engage: v => v.views ? v.likes / v.views : 0 }[S.sort];
-  return list.sort((a, b) => key(b) - key(a));
+
+/* =====================================================================
+   4. リストの組み立て・理由
+   ===================================================================== */
+const V = id => S.data.videos[id];
+const ageDays = v => (Date.now() - v.published) / DAY;
+const matchQ = v => !S.q || (v.title + v.ch).toLowerCase().includes(S.q.toLowerCase());
+const SORTFN = {
+  ratio:  (a, b) => (b.ratio ?? -1) - (a.ratio ?? -1),
+  views:  (a, b) => b.views - a.views,
+  new:    (a, b) => b.published - a.published,
+  engage: (a, b) => (b.views ? b.likes / b.views : 0) - (a.views ? a.likes / a.views : 0),
+};
+/* ジャンル × 形式 × 期間 で最大50件。7日で足りないときは30日以内から補充 */
+function buildList({ genre, format, period, cap = null, sort = 'ratio', minViews = 0, limit = 50 }) {
+  const P = S.data.pools, fmts = format === 'all' ? ['video','stream','short'] : [format];
+  const seen = new Set(), main = [], sup = [];
+  const ok = v => v && (!cap || (v.subs != null && v.subs <= cap)) && v.views >= minViews && matchQ(v);
+  const push = (arr, id) => { if (seen.has(id)) return; const v = V(id); if (!ok(v)) return; seen.add(id); arr.push(v); };
+  for (const f of fmts) {
+    const src = period === 7 ? ['7','new'] : ['30','7','new'];
+    src.forEach(p => (P[`${genre}|${f}|${p}`] || []).forEach(id => push(main, id)));
+  }
+  main.sort(SORTFN[sort]);
+  let list = main.slice(0, limit);
+  const supSet = new Set();
+  if (list.length < limit && period === 7) {
+    for (const f of fmts) (P[`${genre}|${f}|30`] || []).forEach(id => push(sup, id));
+    sup.sort(SORTFN[sort]);
+    sup.slice(0, limit - list.length).forEach(v => { supSet.add(v.id); list.push(v); });
+  }
+  return { list, supSet };
 }
-function subsHist(v) {
-  if (v.demo) return DEMO_HIST[v.chId];
-  const h = S.data && S.data.subs && S.data.subs[v.chId];
-  return h ? h.map(x => x.n) : null;
+function ruleReasons(v) {
+  const R = [], r = v.ratio, d = Math.max(ageDays(v), 0.05), perDay = v.views / d;
+  const like = v.views ? v.likes / v.views : 0, com = v.views ? v.comments / v.views : 0;
+  if (r != null && r >= 5) R.push(['🚀', `登録者の${r.toFixed(1)}倍再生`, 'チャンネル登録者以外にも大きく広がっています。おすすめ・関連動画・検索から新しい視聴者が流入したと考えられます。']);
+  else if (r != null && r >= 1.5) R.push(['📈', `登録者の${r.toFixed(1)}倍再生`, '普段の視聴者層を超えて再生されています。']);
+  if (d <= 7 && perDay >= 10000) R.push(['⚡', '初速が強い', `公開から${d < 1 ? Math.round(d*24)+'時間' : Math.round(d)+'日'}で${fmt(v.views)}回（1日あたり約${fmt(perDay)}回）。公開直後の反応が良く、おすすめに押し上げられたと考えられます。`]);
+  if (like >= 0.05) R.push(['👍', `高評価率 ${(like*100).toFixed(1)}%`, '満足度が高い動画は、おすすめに表示されやすくなります。']);
+  if (com >= 0.004) R.push(['💬', 'コメントが活発', `コメント率 ${(com*100).toFixed(2)}%。視聴者の参加や盛り上がりが起きています。`]);
+  const tk = [...tokenize(v.title).keys()];
+  (S.data.tokens.all || []).filter(t => tk.includes(t.k || t.w.toLowerCase())).slice(0, 2)
+    .forEach(t => R.push(['🔥', `流行ワード「${t.w}」`, `今週「${t.w}」を含む動画が${t.n}本あり、話題の波に乗っています。`]));
+  if (v.fmt === 'short') R.push(['📱', 'ショート動画', 'スワイプで次々と表示されるため、登録者以外の人に届きやすい形式です。']);
+  if (v.fmt === 'stream') R.push(['🔴', v.live != null ? '配信中' : '配信アーカイブ', v.live != null ? `今まさに配信中で、同時接続 ${fmt(v.live)}人。` : 'ライブ配信の盛り上がりが、そのままアーカイブの再生につながっています。']);
+  if (/コラボ|collab|w\/|×/i.test(v.title)) R.push(['🤝', 'コラボ', '複数の配信者のファンが、お互いのチャンネルに流れ込みやすい企画です。']);
+  if (/切り抜き/.test(v.title + v.ch)) R.push(['✂️', '切り抜き', '配信の名場面だけを短く再編集した動画は、元の配信を見ていない人にも届きやすいです。']);
+  if (v.subs != null && v.subs < 10000 && v.views >= 50000) R.push(['🌱', '小規模チャンネルからのバズ', `登録者${fmt(v.subs)}人のチャンネルから${fmt(v.views)}回再生。企画やサムネイルの力で伸びた例です。`]);
+  if (!R.length) R.push(['📊', '安定した再生', '突出した要因は見当たりませんが、ジャンル内で上位の再生数です。']);
+  return R;
 }
+function tokenReason(t, g) {
+  const ai = S.data.aiTok && S.data.aiTok[g] && S.data.aiTok[g][t.w];
+  const st = { new:'今週新しく登場したワードです。', up:'前回より投稿数が大きく増えている急上昇ワードです。', down:'投稿数が減ってきていて、ピークを過ぎつつあります。', steady:'継続して投稿されている定番のワードです。' }[t.st] || '';
+  return { ai, rule: `「${t.w}」を含む動画が直近7日で${t.n}本、合計${fmt(t.views)}回再生されています。${st}` };
+}
+
+/* =====================================================================
+   5. 共通パーツ
+   ===================================================================== */
+const chipCls = 'chip shrink-0 border border-line rounded-full px-4 py-1.5 text-sm font-bold bg-panel hover:border-neon/50';
+const chips = (list, cur, attr) => `<div class="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4">${list.map(x => `<button class="${chipCls}" ${attr}="${x.id}" aria-pressed="${cur === x.id}">${x.label}</button>`).join('')}</div>`;
+const seg = (list, cur, attr, counts) => `<div class="flex bg-panel border border-line rounded-xl p-1 w-full sm:w-fit" role="group">${list.map(x =>
+  `<button class="flex-1 sm:flex-none whitespace-nowrap px-2 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition ${cur === x.id ? 'bg-ink text-white shadow' : 'text-muted hover:text-ink'}" ${attr}="${x.id}" aria-pressed="${cur === x.id}">${x.label}${counts ? `<span class="ml-1 text-[10px] font-mono opacity-70">${counts[x.id] ?? ''}</span>` : ''}</button>`).join('')}</div>`;
 function ratioBadge(r, big) {
   if (r == null) return `<span class="font-mono text-xs text-muted">登録者非公開</span>`;
   const cls = r >= 3 ? 'text-pink border-pink/50 bg-pink/10' : r >= 1 ? 'text-neon border-neon/50 bg-neon/10' : 'text-muted border-line bg-ink/5';
   return `<span class="font-mono font-bold border rounded-md ${big ? 'text-lg px-2 py-0.5' : 'text-xs px-1.5 py-0.5'} ${cls}">×${r >= 10 ? r.toFixed(0) : r.toFixed(1)}</span>`;
 }
 function thumbHTML(v, cls) {
-  if (v.thumb) return `<img src="${esc(v.thumb)}" alt="" loading="lazy" class="${cls} object-cover">`;
+  if (v.thumb) return `<img src="${esc(v.thumb)}" alt="" loading="lazy" class="${cls} object-cover bg-line">`;
   const hue = [...v.chId].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
   return `<div class="${cls} grid place-items-center text-2xl font-black" style="color:hsl(${hue} 45% 30%);background:linear-gradient(135deg,hsl(${hue} 75% 90%),hsl(${(hue+50)%360} 70% 80%))">${esc(v.ch[0])}</div>`;
 }
-function median(a) { if (!a.length) return null; const s = a.slice().sort((x,y)=>x-y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m-1] + s[m]) / 2; }
-
-function renderTrend() {
-  const el = $('#view-trend');
-  const list = S.loading ? [] : trendList();
-  const ratios = list.map(ratioOf).filter(x => x != null);
-  const lives = list.filter(v => v.live != null);
-  const picks = list.filter(v => ratioOf(v) != null && v.views >= 500).sort((a,b) => ratioOf(b) - ratioOf(a)).slice(0, 3);
-  const chartMode = S.mode === 'live' && isChart(S.genre, S.vtOnly);
-  const all = S.loading ? [] : baseList();
-  const counts = { all: all.length, video: 0, stream: 0, short: 0 };
-  all.forEach(v => counts[fmtOf(v)]++);
-
-  el.innerHTML = `
-  <div class="flex flex-col gap-3 mb-4">
-    <div class="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4">
-      ${GENRES.map(g => `<button class="chip shrink-0 border border-line rounded-full px-4 py-1.5 text-sm font-bold bg-panel hover:border-neon/50" data-genre="${g.id}" aria-pressed="${S.genre === g.id}">${g.label}</button>`).join('')}
-    </div>
-    <div class="flex bg-panel border border-line rounded-xl p-1 w-full sm:w-fit" role="group" aria-label="形式">
-      ${FORMATS.map(f => `<button class="flex-1 sm:flex-none whitespace-nowrap px-2 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition ${S.format === f.id ? 'bg-ink text-white shadow' : 'text-muted hover:text-ink'}" data-format="${f.id}" aria-pressed="${S.format === f.id}">${f.label}<span class="ml-1 text-[10px] font-mono opacity-70">${counts[f.id]}</span></button>`).join('')}
-    </div>
-    <div class="flex flex-wrap items-center gap-2 text-sm">
-      <select id="sortSel" class="bg-panel border border-line rounded-lg px-3 py-1.5">
-        ${SORTS.map(s => `<option value="${s.id}" ${S.sort === s.id ? 'selected' : ''}>並び: ${s.label}</option>`).join('')}
-      </select>
-      <select id="periodSel" class="bg-panel border border-line rounded-lg px-3 py-1.5" ${chartMode ? 'disabled title="急上昇チャートは期間指定なし"' : ''}>
-        ${[[1,'24時間'],[7,'7日間'],[30,'30日間']].map(([d,l]) => `<option value="${d}" ${S.period === d ? 'selected' : ''}>期間: ${l}</option>`).join('')}
-      </select>
-      <label class="flex items-center gap-2 bg-panel border border-line rounded-lg px-3 py-1.5 cursor-pointer select-none">
-        <input id="vtOnly" type="checkbox" class="accent-[#0891b2]" ${S.vtOnly ? 'checked' : ''}> VTuberに絞る
-      </label>
-      <span class="text-xs text-muted">${esc(S.note)}</span>
-    </div>
-  </div>
-
-  ${S.error ? `<div class="mb-4 border border-pink/50 bg-pink/10 rounded-xl p-3 text-sm">取得エラー: ${esc(S.error)}<br><span class="text-muted text-xs">APIキー・クォータ残量を確認してください。右上からDEMOに切り替えられます。</span></div>` : ''}
-
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 mb-5">
+function fmtBadge(v, pos = 'absolute bottom-1 left-1') {
+  if (v.live != null) return `<span class="${pos} bg-red-600 text-white text-[9px] font-bold px-1 rounded">LIVE</span>`;
+  if (v.fmt === 'stream') return `<span class="${pos} bg-ink/80 text-white text-[9px] font-bold px-1 rounded">配信</span>`;
+  if (v.fmt === 'short') return `<span class="${pos} bg-pink text-white text-[9px] font-bold px-1 rounded">SHORT</span>`;
+  return '';
+}
+function kpi(label, val, sub, color='neon') {
+  return `<div class="bg-panel border border-line rounded-xl p-3"><div class="text-[11px] text-muted mb-1">${label}</div>
+    <div class="font-mono font-bold text-xl sm:text-2xl text-${color}">${val}</div><div class="text-[10px] text-muted mt-0.5">${sub}</div></div>`;
+}
+function kpis(list) {
+  const ratios = list.map(v => v.ratio).filter(x => x != null), lives = list.filter(v => v.live != null);
+  return `<div class="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 mb-5">
     ${kpi('平均再生数', fmt(list.length ? list.reduce((a,v) => a + v.views, 0) / list.length : null), `${list.length}本の平均`)}
     ${kpi('伸び率 中央値', ratios.length ? '×' + median(ratios).toFixed(2) : '—', '再生数 ÷ 登録者数')}
     ${kpi('最大伸び率', ratios.length ? '×' + Math.max(...ratios).toFixed(1) : '—', 'このリスト内の最高倍率', 'pink')}
     ${kpi('同時接続（配信中）', lives.length ? fmt(lives.reduce((a,v) => a + v.live, 0) / lives.length) : '—', lives.length ? `配信中${lives.length}本の平均` : '配信中の動画なし')}
-  </div>
-
-  ${picks.length ? `
-  <h2 class="font-black mb-2 flex items-center gap-2"><span class="text-pink">🔥</span>急伸企画ピックアップ <span class="hidden sm:inline text-xs font-normal text-muted">登録者に対して再生が伸びている順</span></h2>
-  <div class="flex md:grid md:grid-cols-3 gap-3 mb-6 overflow-x-auto no-scrollbar snap-x scroll-px-4 -mx-4 px-4 py-1 md:mx-0 md:px-0">
-    ${picks.map((v, i) => `
-      <article class="relative shrink-0 w-[72%] sm:w-[48%] md:w-auto snap-start bg-panel border border-line rounded-xl overflow-hidden ${i === 0 ? 'glow-pink' : ''}">
-        <a href="${esc(v.url)}" target="_blank" rel="noopener" class="block relative">
-          ${thumbHTML(v, 'w-full aspect-video')}
-          <span class="absolute top-2 left-2">${ratioBadge(ratioOf(v), true)}</span>
-          ${v.live != null ? '<span class="absolute top-2 right-2 bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">LIVE</span>' : ''}
-        </a>
-        <div class="p-3">
-          <h3 class="text-sm font-bold line-clamp-2 mb-1">${esc(v.title)}</h3>
-          <div class="text-xs text-muted flex justify-between"><span class="truncate">${esc(v.ch)}・登録者${fmt(v.subs)}</span><span class="shrink-0 ml-2">${fmt(v.views)}回</span></div>
-        </div>
-      </article>`).join('')}
-  </div>` : ''}
-
-  <div class="flex items-center justify-between mb-2">
-    <h2 class="font-black">ランキング <span class="text-xs font-normal text-muted">${list.length}件</span></h2>
-  </div>
-  ${S.loading ? `<div class="text-center text-muted py-16 font-mono animate-pulse">LOADING…</div>` :
-    list.length ? `<ol class="flex flex-col gap-2">${list.map((v, i) => trendRow(v, i)).join('')}</ol>` :
-    `<div class="text-center text-muted py-16">該当する動画がありません。期間やジャンルを変えてみてください。</div>`}
-  `;
+  </div>`;
 }
-function kpi(label, val, sub, color='neon') {
-  return `<div class="bg-panel border border-line rounded-xl p-3">
-    <div class="text-[11px] text-muted mb-1">${label}</div>
-    <div class="font-mono font-bold text-xl sm:text-2xl text-${color}">${val}</div>
-    <div class="text-[10px] text-muted mt-0.5">${sub}</div></div>`;
-}
-function trendRow(v, i) {
-  const r = ratioOf(v), on = !!BM.trend[v.id];
-  const eng = v.views ? (v.likes / v.views * 100).toFixed(1) : '—';
-  return `<li class="bg-panel border border-line rounded-xl p-2 sm:p-3 flex gap-2 sm:gap-3 items-center hover:border-neon/40">
-    <div class="w-5 sm:w-6 text-center font-mono font-bold ${i < 3 ? 'text-neon' : 'text-muted'}">${i+1}</div>
-    <a href="${esc(v.url)}" target="_blank" rel="noopener" class="relative shrink-0">
-      ${thumbHTML(v, 'w-24 sm:w-40 aspect-video rounded-lg')}
-      ${v.isShort ? '<span class="absolute bottom-1 left-1 bg-pink text-white text-[9px] font-bold px-1 rounded">SHORT</span>' : ''}
-      ${v.stream && v.live == null ? '<span class="absolute bottom-1 left-1 bg-ink/80 text-white text-[9px] font-bold px-1 rounded">配信</span>' : ''}
-      ${v.live != null ? '<span class="absolute bottom-1 left-1 bg-red-600 text-white text-[9px] font-bold px-1 rounded">LIVE</span>' : ''}
-    </a>
+function subsHist(v) { return S.data.subs && S.data.subs[v.chId]; }
+function videoRow(v, i, opt = {}) {
+  const on = !!BM.v[v.id], eng = v.views ? (v.likes / v.views * 100).toFixed(1) : '—';
+  const r0 = opt.reason ? ruleReasons(v)[0] : null;
+  return `<li class="clickable bg-panel border border-line rounded-xl p-2 sm:p-3 flex gap-2 sm:gap-3 items-center" data-vid="${esc(v.id)}">
+    <div class="w-5 sm:w-6 text-center font-mono font-bold ${i < 3 ? 'text-neon' : 'text-muted'}">${i + 1}</div>
+    <div class="relative shrink-0">${thumbHTML(v, 'w-24 sm:w-40 aspect-video rounded-lg')}${fmtBadge(v)}</div>
     <div class="flex-1 min-w-0">
-      <a href="${esc(v.url)}" target="_blank" rel="noopener" class="text-sm font-bold line-clamp-2 hover:text-neon">${esc(v.title)}</a>
+      <div class="text-sm font-bold line-clamp-2">${esc(v.title)}</div>
       <div class="text-xs text-muted mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-        <span class="truncate max-w-[12rem]">${esc(v.ch)}</span>
-        <span>登録者 ${fmt(v.subs)}</span>
-        <span>${ago(v.published)}</span>
+        <span class="truncate max-w-[12rem]">${esc(v.ch)}</span><span>登録者 ${fmt(v.subs)}</span><span>${ago(v.published)}</span>
+        ${opt.sup && opt.sup.has(v.id) ? '<span class="text-amber">30日以内から補充</span>' : ''}
       </div>
-      <div class="sm:hidden mt-1 flex items-center gap-2 text-xs"><span class="font-mono">${fmt(v.views)}回</span>${ratioBadge(r)}</div>
+      ${r0 ? `<div class="text-[11px] text-amber font-bold mt-1 truncate">${esc(r0[0] + ' ' + r0[1])}</div>` : ''}
+      <div class="sm:hidden mt-1 flex items-center gap-2 text-xs"><span class="font-mono">${fmt(v.views)}回</span>${ratioBadge(v.ratio)}</div>
     </div>
     <div class="hidden sm:flex flex-col items-end gap-1 shrink-0 w-28">
       <div class="font-mono font-bold">${fmt(v.views)}<span class="text-xs text-muted font-sans">回</span></div>
-      ${ratioBadge(r)}
+      ${ratioBadge(v.ratio)}
       <div class="text-[10px] text-muted">高評価率 ${eng}%${v.live != null ? `・同接 ${fmt(v.live)}` : ''}</div>
     </div>
-    <div class="hidden md:flex flex-col items-center shrink-0 w-20" title="チャンネル登録者推移">
-      ${spark(subsHist(v))}
-      <span class="text-[9px] text-muted">登録者推移</span>
-    </div>
-    <button class="shrink-0 text-xl ${on ? 'text-pink' : 'text-muted hover:text-ink'}" data-bm-trend="${esc(v.id)}" style="padding:4px" aria-label="ブックマーク">${on ? '★' : '☆'}</button>
+    <div class="hidden md:flex flex-col items-center shrink-0 w-20" title="チャンネル登録者推移">${spark(subsHist(v))}<span class="text-[9px] text-muted">登録者推移</span></div>
+    <button class="shrink-0 text-xl ${on ? 'text-pink' : 'text-muted hover:text-ink'}" style="padding:4px" data-bm-v="${esc(v.id)}" aria-label="ブックマーク">${on ? '★' : '☆'}</button>
   </li>`;
+}
+const emptyBox = msg => `<div class="text-center text-muted py-16 bg-panel/60 border border-dashed border-line rounded-xl">${msg}</div>`;
+
+/* =====================================================================
+   6. 伸び盛り / トレンド
+   ===================================================================== */
+function renderRanking(el, rising) {
+  const cap = rising ? S.cap : null;
+  const { list, supSet } = buildList({ genre:S.genre, format:S.format, period:S.period, cap, sort:S.sort });
+  const counts = {};
+  FORMATS.forEach(f => counts[f.id] = buildList({ genre:S.genre, format:f.id, period:S.period, cap, sort:S.sort }).list.length);
+  const picks = list.filter(v => v.ratio != null && v.views >= 500).sort(SORTFN.ratio).slice(0, 3);
+  const gl = GENRES.find(g => g.id === S.genre).label;
+  el.innerHTML = `
+  ${rising ? `<div class="bg-panel border border-line rounded-xl p-3 sm:p-4 mb-4 flex flex-col sm:flex-row sm:items-center gap-3">
+      <div class="flex-1"><div class="font-black">🌱 伸び盛りランキング</div><div class="text-xs text-muted mt-0.5">登録者が少ないチャンネルだけで集計。小〜中規模VTuberのバズ企画を見つけやすくしています。</div></div>
+      <div class="flex gap-1.5 overflow-x-auto no-scrollbar">${CAPS.map(([n, l]) => `<button class="${chipCls} !px-3 !text-xs" data-cap="${n}" aria-pressed="${S.cap === n}">${l}</button>`).join('')}</div>
+    </div>` : ''}
+  <div class="flex flex-col gap-3 mb-4">
+    ${chips(GENRES, S.genre, 'data-genre')}
+    ${seg(FORMATS, S.format, 'data-format', counts)}
+    <div class="flex flex-wrap items-center gap-2 text-sm">
+      <select data-set="sort" class="bg-panel border border-line rounded-lg px-3 py-1.5">${SORTS.map(s => `<option value="${s.id}" ${S.sort === s.id ? 'selected' : ''}>並び: ${s.label}</option>`).join('')}</select>
+      <select data-set="period" class="bg-panel border border-line rounded-lg px-3 py-1.5">${[[7,'7日間'],[30,'30日間']].map(([d,l]) => `<option value="${d}" ${S.period === d ? 'selected' : ''}>期間: ${l}</option>`).join('')}</select>
+      <span class="text-xs text-muted">${S.mode === 'demo' ? 'サンプルデータを表示中' : `「VTuber${S.genre === 'all' ? '' : ' ' + gl}」で集計・形式ごとに最大50件`}</span>
+    </div>
+  </div>
+  ${kpis(list)}
+  ${picks.length ? `
+  <h2 class="font-black mb-2 flex items-center gap-2"><span class="text-pink">🔥</span>急伸ピックアップ <span class="hidden sm:inline text-xs font-normal text-muted">登録者に対して再生が伸びている順・タップで詳細</span></h2>
+  <div class="flex md:grid md:grid-cols-3 gap-3 mb-6 overflow-x-auto no-scrollbar snap-x scroll-px-4 -mx-4 px-4 py-1 md:mx-0 md:px-0">
+    ${picks.map((v, i) => { const r0 = ruleReasons(v)[0]; return `
+      <article class="clickable relative shrink-0 w-[72%] sm:w-[48%] md:w-auto snap-start bg-panel border border-line rounded-xl overflow-hidden ${i === 0 ? 'glow-pink' : ''}" data-vid="${esc(v.id)}">
+        <div class="relative">${thumbHTML(v, 'w-full aspect-video')}<span class="absolute top-2 left-2">${ratioBadge(v.ratio, true)}</span>${fmtBadge(v, 'absolute top-2 right-2')}</div>
+        <div class="p-3">
+          <h3 class="text-sm font-bold line-clamp-2 mb-1">${esc(v.title)}</h3>
+          <div class="text-[11px] text-amber font-bold mb-1 truncate">${esc(r0[0] + ' ' + r0[1])}</div>
+          <div class="text-xs text-muted flex justify-between"><span class="truncate">${esc(v.ch)}・登録者${fmt(v.subs)}</span><span class="shrink-0 ml-2">${fmt(v.views)}回</span></div>
+        </div>
+      </article>`; }).join('')}
+  </div>` : ''}
+  <h2 class="font-black mb-2">ランキング <span class="text-xs font-normal text-muted">${list.length}件${supSet.size ? `（うち${supSet.size}件は30日以内から補充）` : ''}・タップで詳細</span></h2>
+  ${list.length ? `<ol class="flex flex-col gap-2">${list.map((v, i) => videoRow(v, i, { sup: supSet })).join('')}</ol>` : emptyBox('該当する動画がありません。期間や登録者の条件を変えてみてください。')}`;
 }
 
 /* =====================================================================
-   5. 過去の流行 データベース
-   revival: hot=今やっても熱い / staple=定番化 / past=過去のバズ
+   7. 検索ワード
    ===================================================================== */
+const KW_SRC = [
+  { id:'tokens',  label:'🔥 話題ワード' },
+  { id:'suggest', label:'🔍 検索候補' },
+  { id:'google',  label:'🌐 Google急上昇' },
+];
+function renderWords() {
+  const el = $('#view-words'), K = S.kw;
+  const desc = {
+    tokens: '直近7日のVTuber動画のタイトル（【】・『』・#タグ）によく出てくるワード。投稿数と再生数で順位付け。タップで関連動画と流行の理由を表示。',
+    suggest: 'YouTubeの検索窓に出てくる候補（よく検索されている言葉）を集計した順位の目安です。正確な検索回数はYouTubeが公開していないため、候補の表示順から推定しています。',
+    google: '今日、日本のGoogle検索で急上昇しているワード（VTuber以外も含む全体）。',
+  }[K.src];
+  let rows = '';
+  const q = S.q.toLowerCase();
+  if (K.src === 'tokens') {
+    const list = (S.data.tokens[K.genre] || []).filter(t => !q || t.w.toLowerCase().includes(q)).slice(0, 50);
+    const max = Math.max(1, ...list.map(t => t.n));
+    rows = list.map((t, i) => `<li class="clickable bg-panel border border-line rounded-xl px-3 py-2.5 flex items-center gap-3" data-tok="${esc(t.k || t.w.toLowerCase())}" data-tokg="${K.genre}">
+      <span class="w-6 text-center font-mono font-bold ${i < 3 ? 'text-neon' : 'text-muted'}">${i + 1}</span>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2"><span class="font-bold truncate">${esc(t.w)}</span>${t.st ? `<span class="shrink-0 text-[10px] font-bold border rounded px-1.5 py-0.5 ${ST[t.st][1]}">${ST[t.st][0]}</span>` : ''}</div>
+        <div class="mt-1 h-1.5 bg-ink/5 rounded-full overflow-hidden"><div class="h-full bg-neon/70 rounded-full" style="width:${t.n / max * 100}%"></div></div>
+      </div>
+      <div class="text-right shrink-0"><div class="font-mono font-bold text-sm">${t.n}<span class="text-[10px] text-muted font-sans">本</span></div><div class="text-[10px] text-muted">${fmt(t.views)}回</div></div>
+      <button class="shrink-0 text-muted hover:text-neon text-sm px-1" data-copy="${esc(t.w)}" data-copymsg="ワードをコピーしました" title="ワードをコピー">📋</button>
+    </li>`).join('');
+  } else if (K.src === 'suggest') {
+    const list = (S.data.suggest[K.genre] || []).filter(t => !q || t.w.includes(q)).slice(0, 50);
+    const max = Math.max(1, ...list.map(t => t.s));
+    rows = list.map((t, i) => `<li class="bg-panel border border-line rounded-xl px-3 py-2.5 flex items-center gap-3">
+      <span class="w-6 text-center font-mono font-bold ${i < 3 ? 'text-neon' : 'text-muted'}">${i + 1}</span>
+      <div class="flex-1 min-w-0"><div class="font-bold truncate">${esc(t.w)}</div>
+        <div class="mt-1 h-1.5 bg-ink/5 rounded-full overflow-hidden"><div class="h-full bg-pink/60 rounded-full" style="width:${t.s / max * 100}%"></div></div></div>
+      <button class="shrink-0 text-muted hover:text-neon text-sm px-1" data-copy="${esc(t.w)}" data-copymsg="ワードをコピーしました" title="ワードをコピー">📋</button>
+      ${TOUCH ? `<a class="shrink-0 text-neon text-sm px-1" href="${esc(ytSearchUrl(t.w))}" target="_blank" rel="noopener">▶</a>` : `<button class="shrink-0 text-muted hover:text-neon text-sm px-1" data-copy="${esc(ytSearchUrl(t.w))}" data-copymsg="YouTube検索URLをコピーしました" title="YouTube検索URLをコピー">🔗</button>`}
+    </li>`).join('');
+  } else {
+    rows = (S.data.gtrends || []).filter(t => !q || t.w.toLowerCase().includes(q)).map((t, i) => `<li class="bg-panel border border-line rounded-xl px-3 py-2.5 flex items-center gap-3">
+      <span class="w-6 text-center font-mono font-bold ${i < 3 ? 'text-neon' : 'text-muted'}">${i + 1}</span>
+      <div class="flex-1 min-w-0"><div class="font-bold truncate">${esc(t.w)}</div>${t.news ? `<div class="text-[11px] text-muted truncate">${esc(t.news)}</div>` : ''}</div>
+      <span class="shrink-0 text-xs font-mono text-amber font-bold">${esc(t.traffic || '')}</span>
+      <button class="shrink-0 text-muted hover:text-neon text-sm px-1" data-copy="${esc(t.w)}" data-copymsg="ワードをコピーしました">📋</button>
+    </li>`).join('');
+  }
+  el.innerHTML = `
+  <div class="flex flex-col gap-3 mb-4">
+    ${seg(KW_SRC, K.src, 'data-kwsrc')}
+    ${K.src !== 'google' ? chips(GENRES, K.genre, 'data-kwgenre') : ''}
+    <p class="text-xs text-muted">${desc}</p>
+  </div>
+  ${rows ? `<ol class="grid lg:grid-cols-2 gap-2">${rows}</ol>` : emptyBox('まだデータがありません（次回の自動更新で集計されます）')}`;
+}
+
+/* =====================================================================
+   8. コンテンツ（今の流行 / バズ動画 / 過去の流行）
+   ===================================================================== */
+const CT_TABS = [ { id:'now', label:'🔥 今の流行' }, { id:'buzz', label:'🚀 バズ動画' }, { id:'past', label:'🗂 過去の流行' } ];
+function renderContent() {
+  const el = $('#view-content'), C = S.ct;
+  let body = '';
+  if (C.tab === 'now') {
+    const q = S.q.toLowerCase();
+    const list = (S.data.tokens[C.genre] || []).filter(t => !q || t.w.toLowerCase().includes(q)).slice(0, 50);
+    body = `${chips(GENRES, C.genre, 'data-ctgenre')}
+      <p class="text-xs text-muted my-3">今週のVTuber動画で流行っている企画・ゲーム・曲・ワードです。カードをタップすると、流行の理由と代表的な動画が見られます。</p>
+      ${list.length ? `<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">${list.map((t, i) => {
+        const v = V(t.top[0]); const rs = tokenReason(t, C.genre);
+        return `<article class="clickable bg-panel border border-line rounded-xl overflow-hidden flex flex-col" data-tok="${esc(t.k || t.w.toLowerCase())}" data-tokg="${C.genre}">
+          <div class="relative">${v ? thumbHTML(v, 'w-full aspect-video') : ''}<span class="absolute top-2 left-2 bg-ink/80 text-white font-mono font-bold text-xs rounded px-1.5 py-0.5">#${i + 1}</span>
+            ${t.st ? `<span class="absolute top-2 right-2 text-[10px] font-bold border rounded px-1.5 py-0.5 bg-panel ${ST[t.st][1]}">${ST[t.st][0]}</span>` : ''}</div>
+          <div class="p-3 flex-1 flex flex-col">
+            <h3 class="font-black text-base mb-1 truncate">${esc(t.w)}</h3>
+            <div class="text-xs text-muted mb-2">動画 ${t.n}本・合計 ${fmt(t.views)}回</div>
+            <p class="text-xs text-ink/80 leading-relaxed line-clamp-3 flex-1">${esc(rs.ai || rs.rule)}</p>
+          </div></article>`; }).join('')}</div>` : emptyBox('まだデータがありません（次回の自動更新で集計されます）')}`;
+  } else if (C.tab === 'buzz') {
+    const { list } = buildList({ genre:C.genre, format:C.format, period:S.period, sort:'ratio', minViews:10000 });
+    body = `<div class="flex flex-col gap-3 mb-3">${chips(GENRES, C.genre, 'data-ctgenre')}${seg(FORMATS, C.format, 'data-ctformat')}
+      <p class="text-xs text-muted">直近${S.period}日・1万回以上再生された動画を「登録者に対する伸び率」で並べたバズランキング。タップで伸びた理由を表示。</p></div>
+      ${list.length ? `<ol class="flex flex-col gap-2">${list.map((v, i) => videoRow(v, i, { reason: true })).join('')}</ol>` : emptyBox('該当する動画がありません')}`;
+  } else {
+    body = renderPast();
+  }
+  el.innerHTML = `<div class="mb-4">${seg(CT_TABS, C.tab, 'data-cttab')}</div>${body}`;
+}
+
+/* 過去の流行（キュレーション） */
 const ARCH = [
   { y:2020, g:'game', t:'コラボ企画', name:'Among Us 人狼コラボ', origin:'Innersloth のゲーム。海外配信者の大型コラボから国内VTuber界隈へ', why:'会話劇と裏切りで「複数視点の切り抜き」が量産でき、箱内外のコラボ需要と噛み合った。', rv:'past', q:'Among Us VTuber コラボ' },
   { y:2020, g:'game', t:'ゲーム', name:'Fall Guys', origin:'Mediatonic のバトロワ系パーティーゲーム', why:'見た目がかわいく、負けてもリアクションが映える。視聴者参加型と相性が良かった。', rv:'past', q:'Fall Guys VTuber' },
@@ -426,162 +582,121 @@ ARCH.forEach((a, i) => a.id = 'a' + i);
 const RV = { hot:['今やっても熱い','text-pink border-pink/50 bg-pink/10'], staple:['定番化','text-lime border-lime/50 bg-lime/10'], past:['過去のバズ','text-muted border-line bg-ink/5'] };
 const GL = { game:'ゲーム', song:'歌ってみた', talk:'雑談', plan:'企画', short:'ショート' };
 const TYPES = ['ゲーム','コラボ企画','歌','ショート','トレンドワード'];
-
 function archList() {
-  const f = S.arch; let l = ARCH.filter(a =>
-    (f.year === 'all' || a.y === +f.year) && (f.genre === 'all' || a.g === f.genre) &&
-    (f.type === 'all' || a.t === f.type) && (f.revival === 'all' || a.rv === f.revival));
+  const f = S.arch; let l = ARCH.filter(a => (f.year === 'all' || a.y === +f.year) && (f.genre === 'all' || a.g === f.genre) && (f.type === 'all' || a.t === f.type) && (f.revival === 'all' || a.rv === f.revival));
   if (S.q) { const q = S.q.toLowerCase(); l = l.filter(a => (a.name + a.origin + a.why).toLowerCase().includes(q)); }
-  const rvOrder = { hot:0, staple:1, past:2 };
-  return l.sort(f.sort === 'old' ? (a,b) => a.y - b.y : f.sort === 'revival' ? (a,b) => rvOrder[a.rv] - rvOrder[b.rv] || b.y - a.y : (a,b) => b.y - a.y);
+  const o = { hot:0, staple:1, past:2 };
+  return l.sort(f.sort === 'old' ? (a,b) => a.y - b.y : f.sort === 'revival' ? (a,b) => o[a.rv] - o[b.rv] || b.y - a.y : (a,b) => b.y - a.y);
 }
 function chipRow(label, key, opts) {
-  return `<div class="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-4 px-4">
-    <span class="text-xs text-muted shrink-0 w-14">${label}</span>
-    ${opts.map(([v, l]) => `<button class="chip shrink-0 border border-line rounded-full px-3 py-1 text-xs font-bold bg-panel hover:border-neon/50" data-arch="${key}" data-val="${v}" aria-pressed="${String(S.arch[key]) === String(v)}">${l}</button>`).join('')}
-  </div>`;
+  return `<div class="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-4 px-4"><span class="text-xs text-muted shrink-0 w-14">${label}</span>
+    ${opts.map(([v, l]) => `<button class="${chipCls} !px-3 !py-1 !text-xs" data-arch="${key}" data-val="${v}" aria-pressed="${String(S.arch[key]) === String(v)}">${l}</button>`).join('')}</div>`;
 }
 function archCard(a) {
   const on = !!BM.arch[a.id], [rl, rc] = RV[a.rv];
-  return `<article class="bg-panel border border-line rounded-xl p-4 flex flex-col hover:border-neon/40">
-    <div class="flex items-center gap-2 mb-2 text-[11px]">
-      <span class="font-mono font-bold text-neon">${a.y}</span>
-      <span class="border border-line rounded px-1.5 py-0.5 text-muted">${GL[a.g]}</span>
-      <span class="border border-line rounded px-1.5 py-0.5 text-muted">${a.t}</span>
-      <span class="ml-auto border rounded px-1.5 py-0.5 font-bold ${rc}">${rl}</span>
-    </div>
+  return `<article class="bg-panel border border-line rounded-xl p-4 flex flex-col">
+    <div class="flex items-center gap-2 mb-2 text-[11px]"><span class="font-mono font-bold text-neon">${a.y}</span>
+      <span class="border border-line rounded px-1.5 py-0.5 text-muted">${GL[a.g]}</span><span class="border border-line rounded px-1.5 py-0.5 text-muted">${a.t}</span>
+      <span class="ml-auto border rounded px-1.5 py-0.5 font-bold ${rc}">${rl}</span></div>
     <h3 class="font-black text-base mb-1">${esc(a.name)}</h3>
     <div class="text-xs text-muted mb-2">発祥: ${esc(a.origin)}</div>
     <p class="text-sm text-ink/85 leading-relaxed flex-1"><span class="text-neon text-xs font-bold mr-1">流行った理由</span>${esc(a.why)}</p>
-    <div class="flex items-center justify-between mt-3 pt-3 border-t border-line">
-      <a href="${ytSearchUrl(a.q)}" target="_blank" rel="noopener" class="text-xs text-neon hover:underline">▶ 関連動画をYouTubeで見る</a>
-      <button class="text-lg ${on ? 'text-pink' : 'text-muted hover:text-ink'}" data-bm-arch="${a.id}" aria-label="ブックマーク">${on ? '★' : '☆'}</button>
-    </div>
+    <div class="flex items-center justify-between mt-3 pt-3 border-t border-line">${miniLink(ytSearchUrl(a.q), '関連動画')}
+      <button class="text-lg ${on ? 'text-pink' : 'text-muted hover:text-ink'}" data-bm-arch="${a.id}" aria-label="ブックマーク">${on ? '★' : '☆'}</button></div>
   </article>`;
 }
-function renderArchive() {
+function renderPast() {
   const l = archList(), years = [...new Set(ARCH.map(a => a.y))].sort();
-  const byYear = years.map(y => [y, ARCH.filter(a => a.y === y).length]), maxY = Math.max(...byYear.map(x => x[1]));
-  $('#view-archive').innerHTML = `
-  <div class="bg-panel border border-line rounded-xl p-4 mb-4 flex flex-col gap-2.5">
+  return `<div class="bg-panel border border-line rounded-xl p-4 mb-4 flex flex-col gap-2.5">
     ${chipRow('年度', 'year', [['all','すべて'], ...years.map(y => [y, y + '年'])])}
     ${chipRow('ジャンル', 'genre', [['all','すべて'], ...Object.entries(GL)])}
     ${chipRow('タイプ', 'type', [['all','すべて'], ...TYPES.map(t => [t, t])])}
     ${chipRow('リバイバル', 'revival', [['all','すべて'], ...Object.entries(RV).map(([k, v]) => [k, v[0]])])}
   </div>
-  <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
-    <div>
-      <h2 class="font-black">過去の流行アーカイブ <span class="text-xs font-normal text-muted">${l.length} / ${ARCH.length}件</span></h2>
-      <div class="flex items-end gap-1 mt-2 h-8" title="年別の収録数">
-        ${byYear.map(([y, n]) => `<div class="flex flex-col items-center gap-0.5"><div class="w-6 rounded-sm ${String(S.arch.year) === String(y) ? 'bg-neon' : 'bg-neon/30'}" style="height:${Math.max(3, n/maxY*22)}px"></div><span class="text-[9px] text-muted font-mono">${String(y).slice(2)}</span></div>`).join('')}
-      </div>
-    </div>
-    <select id="archSort" class="bg-panel border border-line rounded-lg px-3 py-1.5 text-sm">
-      ${[['new','新しい順'],['old','古い順'],['revival','今やっても熱い順']].map(([v, t]) => `<option value="${v}" ${S.arch.sort === v ? 'selected' : ''}>並び: ${t}</option>`).join('')}
-    </select>
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+    <h2 class="font-black">過去の流行アーカイブ <span class="text-xs font-normal text-muted">${l.length} / ${ARCH.length}件</span></h2>
+    <select data-set="archsort" class="bg-panel border border-line rounded-lg px-3 py-1.5 text-sm">${[['new','新しい順'],['old','古い順'],['revival','今やっても熱い順']].map(([v, t]) => `<option value="${v}" ${S.arch.sort === v ? 'selected' : ''}>並び: ${t}</option>`).join('')}</select>
   </div>
-  ${l.length ? `<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">${l.map(archCard).join('')}</div>` :
-    '<div class="text-center text-muted py-16">条件に合う企画がありません。フィルターを緩めてみてください。</div>'}
-  <p class="text-[11px] text-muted mt-6">※ 収録データはVTuber界隈で話題になった代表例をまとめたものです。ゲーム・楽曲の配信可否は各権利者のガイドラインを必ず確認してください。</p>`;
+  ${l.length ? `<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">${l.map(archCard).join('')}</div>` : emptyBox('条件に合う企画がありません')}
+  <p class="text-[11px] text-muted mt-6">※ VTuber界隈で話題になった代表例をまとめたものです。ゲーム・楽曲の配信可否は各権利者のガイドラインを確認してください。</p>`;
 }
 
 /* =====================================================================
-   6. 解説ナレッジ（海外ノウハウ＋元動画）
+   9. 解説ナレッジ
    ===================================================================== */
 const KCAT = { algo:'アルゴリズム攻略', thumb:'サムネイル・タイトル術', short:'ショート動画攻略', mental:'メンタル・リスナー維持' };
 const KNOW = [
   { id:'k1', cat:'algo', title:'アルゴリズムは動画ではなく「視聴者」を見ている',
     sum:['YouTube公式は「アルゴリズムは視聴者の行動と満足度を追いかける仕組み」と繰り返し説明している','クリック率と視聴維持率は単体でなく「どこに表示されたか」とセットで見る','公開直後に伸びなくても、刺さる視聴者が見つかれば後から再浮上することがある'],
-    body:[
-      ['何が起きているか','ホーム・関連動画・検索など表示される場所ごとに、「この人はこの動画を見て満足しそうか」を予測して表示しています。YouTube公式チャンネル（Creator Insider など）では、クリックや視聴時間だけでなく、視聴後アンケートや「興味なし」、高評価なども満足度の手がかりになると説明されています。'],
+    body:[['何が起きているか','ホーム・関連動画・検索など表示される場所ごとに、「この人はこの動画を見て満足しそうか」を予測して表示しています。YouTube公式チャンネル（Creator Insider など）では、クリックや視聴時間だけでなく、視聴後アンケートや「興味なし」、高評価なども満足度の手がかりになると説明されています。'],
       ['VTuberへの当てはめ','配信アーカイブは長尺のため維持率が低く出がちです。①タイトルで「何が起きる配信か」を明確にする、②チャプターを付ける、③名場面は切り抜きやショートとして別に出す、の3つで「満足して見終えた」視聴者を増やせます。'],
       ['見るべき数字','Studioの「リーチ」で、インプレッション → クリック率 → 平均視聴時間の流れを確認します。インプレッションが急に増えたときにクリック率が下がるのは普通で、新しい層に表示され始めたサインです。']],
     src:[['Creator Insider','YouTube社員による公式解説チャンネル','Creator Insider algorithm'],['YouTube Creators','YouTube公式のクリエイター向けチャンネル','YouTube Creators how the algorithm works']] },
   { id:'k2', cat:'algo', title:'冒頭30秒とリテンショングラフの読み方',
     sum:['離脱が最も多いのは冒頭。最初の30秒で「この動画で得られるもの」を約束する','グラフの急落＝期待とのズレ、平坦＝満足、山＝見返されている名場面','山の部分はそのままショートや切り抜きの素材になる'],
-    body:[
-      ['海外での定説','YouTubeストラテジストの Paddy Galloway らの分析動画や、MrBeast の制作チーム向けドキュメントでは、冒頭の数十秒で視聴者の期待に応えることが最重要だと繰り返し強調されています。'],
+    body:[['海外での定説','YouTubeストラテジストの Paddy Galloway らの分析動画や、MrBeast の制作チーム向けドキュメントでは、冒頭の数十秒で視聴者の期待に応えることが最重要だと繰り返し強調されています。'],
       ['グラフの見方','急な落ち込みは「サムネ・タイトルの期待と中身がズレた」地点。なだらかな横ばいは満足して見ている状態。グラフが盛り上がる山は、巻き戻して見返されている場所です。'],
       ['配信者向けの実践','アーカイブの待機画面や長い挨拶はカットするか、冒頭に「今日のハイライト」を10秒入れて山場を予告します。山の部分は切り抜き・ショートにすると、すでに証明された面白さを再利用できます。']],
     src:[['Paddy Galloway','YouTube戦略の分析で知られるコンサルタント','Paddy Galloway retention'],['MrBeast','制作ドキュメントで冒頭の重要性を強調','MrBeast how to succeed retention']] },
   { id:'k3', cat:'thumb', title:'タイトルとサムネは「1つのアイデア」を分担して伝える',
     sum:['サムネとタイトルで同じ言葉を繰り返さず、互いに補い合う','サムネの要素は3つまで。スマホの小さい表示で読めるかを必ず確認','YouTubeの「テストと比較」機能でサムネをA/Bテストできる'],
-    body:[
-      ['考え方','Film Booth などのサムネ・タイトル解説で共通するのは「サムネで状況を見せ、タイトルで続きが気になる一言を足す」という分担です。同じ文字をサムネとタイトルの両方に書くと、情報量が半分になります。'],
+    body:[['考え方','Film Booth などのサムネ・タイトル解説で共通するのは「サムネで状況を見せ、タイトルで続きが気になる一言を足す」という分担です。同じ文字をサムネとタイトルの両方に書くと、情報量が半分になります。'],
       ['VTuberの場合','立ち絵の表情差分（驚き・泣き・ドヤ顔）を用意しておくと、毎回の制作が速くなります。サムネ文字は5〜8文字程度、ゲームなら象徴的な画面（ボス・異変・事故の瞬間）を大きく使うのが基本です。'],
       ['検証する','YouTube Studio の「テストと比較」でサムネを複数登録すると、どれが長く見られたかを自動で比較してくれます。感覚ではなく結果で選ぶ習慣を付けましょう。']],
     src:[['Film Booth','タイトル・サムネ術の解説チャンネル','Film Booth thumbnail title'],['YouTube Creators','「テストと比較」機能の公式解説','YouTube thumbnail test and compare']] },
   { id:'k4', cat:'thumb', title:'企画はサムネとタイトルから先に考える',
     sum:['海外トップ勢は「撮る前にパッケージ（サムネ＋タイトル）を決める」ことが多い','パッケージが思いつかない企画は、内容が良くてもクリックされにくい','配信も「タイトルを先に決めてから企画を詰める」だけで枠の魅力が上がる'],
-    body:[
-      ['パッケージ先行','Colin and Samir のインタビューや MrBeast の発言で繰り返し語られるのが「パッケージから企画を作る」発想です。一目で分かる面白さがある企画だけを実行することで、外れ回を減らします。'],
+    body:[['パッケージ先行','Colin and Samir のインタビューや MrBeast の発言で繰り返し語られるのが「パッケージから企画を作る」発想です。一目で分かる面白さがある企画だけを実行することで、外れ回を減らします。'],
       ['配信への応用','「【ホラー】叫んだら即終了」のように、タイトルにルールや賭けを入れると「どうなるか見たい」という理由が生まれます。毎回の配信タイトルを3案出して、一番クリックしたくなるものを選ぶだけでも効果があります。']],
     src:[['Colin and Samir','クリエイター経済のインタビューチャンネル','Colin and Samir packaging ideas'],['MrBeast','企画とパッケージの考え方','MrBeast thumbnail first idea']] },
   { id:'k5', cat:'short', title:'ショートは最初の1秒とループで決まる',
     sum:['イントロ・挨拶は不要。1秒目から本題（オチの手前）を見せる','最後が最初につながる「ループ構成」は再視聴を生みやすい','Studioの「視聴された / スワイプされた」割合が最重要の通信簿'],
-    body:[
-      ['構成','ショート専門で知られる Jenny Hoyos などは、台本を極限まで削り、1秒目から状況が分かる構成を推奨しています。「どうも〇〇です」は配信では大事でも、ショートではスワイプの原因になります。'],
+    body:[['構成','ショート専門で知られる Jenny Hoyos などは、台本を極限まで削り、1秒目から状況が分かる構成を推奨しています。「どうも〇〇です」は配信では大事でも、ショートではスワイプの原因になります。'],
       ['尺について','ショートは最大3分まで投稿できるようになりましたが、伸びやすいのは「必要な分だけ」の短い尺です。まず15〜40秒で山場1つ、を基本にしましょう。'],
       ['確認する数字','Studioのショート分析には「視聴された」と「スワイプされた」の割合が表示されます。ここが改善すれば表示回数も伸びていきます。']],
     src:[['Jenny Hoyos','ショート動画戦略で知られるクリエイター','Jenny Hoyos shorts strategy'],['YouTube Creators','ショートの公式ガイド','YouTube Shorts tips creators']] },
   { id:'k6', cat:'short', title:'ショートから長尺・配信へ視聴者を連れていく',
     sum:['ショートの視聴者は、長尺・配信の視聴者と別の層になりやすい','ショートに「関連動画」を設定して、本編アーカイブへの導線を作る','シリーズ化して「この人のショートの続きが見たい」状態を作る'],
-    body:[
-      ['よくある失敗','ショートが伸びても登録者や配信の同接が増えない、というのは海外でもよく語られる悩みです。原因は、ショート単体で完結していて「次に見るもの」がないことです。'],
+    body:[['よくある失敗','ショートが伸びても登録者や配信の同接が増えない、というのは海外でもよく語られる悩みです。原因は、ショート単体で完結していて「次に見るもの」がないことです。'],
       ['導線の作り方','ショートの編集画面で「関連動画」に元配信のアーカイブを設定すると、ショートの下にリンクが表示されます。配信の名場面ショート → フル配信、という流れを毎回作りましょう。'],
       ['シリーズ化','「○○あるある #3」のように番号付きのシリーズにすると、チャンネルを見に来る理由が生まれます。']],
     src:[['vidIQ','YouTube成長ツール公式チャンネル','vidIQ shorts to long form'],['Think Media','YouTube運用ノウハウの解説チャンネル','Think Media YouTube Shorts grow channel']] },
   { id:'k7', cat:'mental', title:'数字に振り回されないために、見る指標を絞る',
     sum:['毎日アナリティクスを見るより、週1回の振り返り時間を決める','比較対象は他人ではなく「自分の直近10本」','燃え尽きは海外の大手クリエイターも公に語るテーマ。休む予定も配信スケジュールに入れる'],
-    body:[
-      ['自分と比べる','Studioには「通常のパフォーマンス」との比較表示があり、自分の普段の動画と比べて良いか悪いかが分かります。他人の数字と比べるより、改善点がはっきりします。'],
+    body:[['自分と比べる','Studioには「通常のパフォーマンス」との比較表示があり、自分の普段の動画と比べて良いか悪いかが分かります。他人の数字と比べるより、改善点がはっきりします。'],
       ['燃え尽き対策','Ali Abdaal や Colin and Samir の番組でも、多くのクリエイターがバーンアウト経験を語っています。共通する対策は「休みを先に予定に入れる」「数字を見る日を決める」「作る楽しさを残す」の3つです。']],
     src:[['Ali Abdaal','生産性とクリエイター生活の発信者','Ali Abdaal burnout YouTube'],['Colin and Samir','クリエイターの燃え尽きに関するインタビュー','Colin and Samir creator burnout']] },
   { id:'k8', cat:'mental', title:'リスナーを「常連」に変える運用',
     sum:['固定スケジュールは最強のリスナー維持施策。曜日と時間を固定して告知する','コメントやメンバーの名前を呼ぶなど「見つけてもらえた感覚」を作る','配信外はコミュニティ投稿・Discord・ショートで接点を保つ'],
-    body:[
-      ['習慣になる配信','海外のストリーマーやVTuberの成長解説で必ず出てくるのが「スケジュールの固定」です。「火曜21時はこの人」と覚えてもらえると、通知がなくても来てくれるようになります。'],
+    body:[['習慣になる配信','海外のストリーマーやVTuberの成長解説で必ず出てくるのが「スケジュールの固定」です。「火曜21時はこの人」と覚えてもらえると、通知がなくても来てくれるようになります。'],
       ['参加している感覚','初見さんへの挨拶、常連の名前を呼ぶ、マシュマロや質問を拾う。小さな配信ほど、一人ひとりを認識できることが最大の強みになります。'],
       ['配信外の接点','週間スケジュールをコミュニティ投稿で出す、配信の切り抜きショートを出す、Discordで次回の企画アンケートを取る、など配信がない日もつながりを保ちます。']],
     src:[['海外VTuber・ストリーマーの成長解説','英語圏で多数の解説動画あり','how to grow as a VTuber tips'],['vidIQ','ライブ配信の伸ばし方','vidIQ live stream grow']] },
 ];
-const vidStore = () => store.get('vtb_kvid', {});
-const parseVid = s => { s = (s || '').trim(); const m = /(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([\w-]{11})/.exec(s); return m ? m[1] : (/^[\w-]{11}$/.test(s) ? s : null); };
-
-function knowList() {
-  let l = KNOW.filter(k => S.kcat === 'all' || k.cat === S.kcat);
-  if (S.q) { const q = S.q.toLowerCase(); l = l.filter(k => (k.title + k.sum.join('') + k.body.flat().join('')).toLowerCase().includes(q)); }
-  return l;
-}
 function renderKnow() {
   const el = $('#view-know');
   if (S.kopen) return renderArticle(el, KNOW.find(k => k.id === S.kopen));
-  const l = knowList();
-  el.innerHTML = `
-  <div class="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4 mb-4">
-    ${[['all','すべて'], ...Object.entries(KCAT)].map(([v, t]) => `<button class="chip shrink-0 border border-line rounded-full px-4 py-1.5 text-sm font-bold bg-panel hover:border-neon/50" data-kcat="${v}" aria-pressed="${S.kcat === v}">${t}</button>`).join('')}
-  </div>
-  <div class="grid md:grid-cols-2 gap-3">
-    ${l.map(k => `
-      <article class="bg-panel border border-line rounded-xl p-4 hover:border-neon/40 cursor-pointer" data-kopen="${k.id}">
-        <div class="flex items-center justify-between mb-2">
-          <span class="text-[11px] text-neon font-bold">${KCAT[k.cat]}</span>
-          <button class="text-lg ${BM.know[k.id] ? 'text-pink' : 'text-muted hover:text-ink'}" data-bm-know="${k.id}" aria-label="ブックマーク">${BM.know[k.id] ? '★' : '☆'}</button>
-        </div>
+  const q = S.q.toLowerCase();
+  const l = KNOW.filter(k => (S.kcat === 'all' || k.cat === S.kcat) && (!q || (k.title + k.sum.join('')).toLowerCase().includes(q)));
+  const kn = S.data.know || {};
+  el.innerHTML = `${chips([{ id:'all', label:'すべて' }, ...Object.entries(KCAT).map(([id, label]) => ({ id, label }))], S.kcat, 'data-kcat')}
+  <div class="grid md:grid-cols-2 gap-3 mt-4">
+    ${l.map(k => `<article class="clickable bg-panel border border-line rounded-xl p-4" data-kopen="${k.id}">
+        <div class="flex items-center justify-between mb-2"><span class="text-[11px] text-neon font-bold">${KCAT[k.cat]}</span>
+          <button class="text-lg ${BM.know[k.id] ? 'text-pink' : 'text-muted hover:text-ink'}" data-bm-know="${k.id}" aria-label="ブックマーク">${BM.know[k.id] ? '★' : '☆'}</button></div>
         <h3 class="font-black mb-2">${esc(k.title)}</h3>
         <ul class="text-sm text-ink/80 space-y-1">${k.sum.map(s => `<li class="flex gap-2"><span class="text-neon">›</span><span>${esc(s)}</span></li>`).join('')}</ul>
-        <div class="text-xs text-muted mt-3">参考: ${k.src.map(s => esc(s[0])).join(' / ')} ${vidStore()[k.id] ? '・<span class="text-lime">元動画登録済</span>' : ''}</div>
-      </article>`).join('') || '<div class="text-muted py-10">該当する記事がありません。</div>'}
+        <div class="text-xs mt-3 ${kn[k.id] ? 'text-lime font-bold' : 'text-muted'}">${kn[k.id] ? '🎬 元動画の要約あり' : '参考: ' + k.src.map(s => esc(s[0])).join(' / ')}</div>
+      </article>`).join('') || emptyBox('該当する記事がありません')}
   </div>`;
 }
 function renderArticle(el, k) {
-  const vid = vidStore()[k.id];
+  const ks = (S.data.know || {})[k.id];
+  const vurl = ks ? 'https://www.youtube.com/watch?v=' + ks.id : '';
   el.innerHTML = `
-  <button id="kback" class="text-sm text-muted hover:text-neon mb-3">← 記事一覧に戻る</button>
-  <div class="flex items-center gap-3 mb-1">
-    <span class="text-xs text-neon font-bold">${KCAT[k.cat]}</span>
-    <button class="text-lg ${BM.know[k.id] ? 'text-pink' : 'text-muted hover:text-ink'}" data-bm-know="${k.id}">${BM.know[k.id] ? '★ 保存済み' : '☆ 保存'}</button>
-  </div>
+  <button data-kback class="text-sm text-muted hover:text-neon mb-3">← 記事一覧に戻る</button>
+  <div class="flex items-center gap-3 mb-1"><span class="text-xs text-neon font-bold">${KCAT[k.cat]}</span>
+    <button class="text-sm ${BM.know[k.id] ? 'text-pink' : 'text-muted hover:text-ink'}" data-bm-know="${k.id}">${BM.know[k.id] ? '★ 保存済み' : '☆ 保存'}</button></div>
   <h1 class="text-xl sm:text-2xl font-black mb-4">${esc(k.title)}</h1>
   <div class="bg-neon/5 border border-neon/30 rounded-xl p-4 mb-5 glow">
     <div class="text-xs font-mono font-bold text-neon mb-2">3行要約</div>
@@ -592,48 +707,98 @@ function renderArticle(el, k) {
       ${k.body.map(([h, p]) => `<section><h2 class="font-black mb-1.5 border-l-2 border-pink pl-2">${esc(h)}</h2><p class="text-sm leading-7 text-ink/85">${esc(p)}</p></section>`).join('')}
     </div>
     <aside class="lg:sticky lg:top-32 self-start bg-panel border border-line rounded-xl p-4">
-      <div class="text-xs font-mono font-bold text-pink mb-2">元動画・参考ソース</div>
-      ${vid ? `<div class="aspect-video rounded-lg overflow-hidden mb-3 bg-black"><iframe class="w-full h-full" src="https://www.youtube-nocookie.com/embed/${esc(vid)}" title="参考動画" allowfullscreen loading="lazy"></iframe></div>` :
-        `<div class="aspect-video rounded-lg mb-3 border border-dashed border-line grid place-items-center text-center text-xs text-muted p-4">下の検索リンクから元動画を探し、<br>URLを貼ると、ここに埋め込み表示されます</div>`}
-      <ul class="space-y-2 mb-3">
-        ${k.src.map(([n, d, q]) => `<li class="text-sm"><a class="text-neon hover:underline" href="${ytSearchUrl(q)}" target="_blank" rel="noopener">▶ ${esc(n)}</a><div class="text-[11px] text-muted">${esc(d)}</div></li>`).join('')}
-      </ul>
-      <div class="flex gap-2">
-        <input id="vidIn" placeholder="YouTubeのURL または 動画ID" class="flex-1 min-w-0 bg-void border border-line rounded-lg px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-neon/60">
-        <button id="vidSave" class="bg-neon text-white text-xs font-bold rounded-lg px-3">登録</button>
-      </div>
-      ${vid ? '<button id="vidDel" class="text-[11px] text-muted hover:text-pink mt-2">登録した動画を外す</button>' : ''}
+      <div class="text-xs font-mono font-bold text-pink mb-2">🎬 元動画の要約</div>
+      ${ks ? `
+        <div class="aspect-video rounded-lg overflow-hidden mb-3 bg-black"><iframe class="w-full h-full" src="https://www.youtube-nocookie.com/embed/${esc(ks.id)}" title="元動画" allowfullscreen loading="lazy"></iframe></div>
+        <div class="font-bold text-sm mb-0.5">${esc(ks.title)}</div><div class="text-xs text-muted mb-3">${esc(ks.ch)}</div>
+        ${(ks.summary || []).length ? `<ol class="text-sm space-y-1 mb-3">${ks.summary.map((s, i) => `<li class="flex gap-2"><span class="font-mono text-pink">${i+1}.</span><span>${esc(s)}</span></li>`).join('')}</ol>` : ''}
+        ${(ks.points || []).map(p => `<div class="mb-2"><div class="text-sm font-bold">${esc(p.h)}</div><p class="text-xs text-ink/80 leading-relaxed">${esc(p.p)}</p></div>`).join('')}
+        ${(ks.forVtuber || []).length ? `<div class="bg-lime/10 border border-lime/30 rounded-lg p-3 mt-3"><div class="text-xs font-bold text-lime mb-1">VTuberがすぐできること</div><ul class="text-xs space-y-1">${ks.forVtuber.map(s => `<li>✓ ${esc(s)}</li>`).join('')}</ul></div>` : ''}
+        <div class="text-[10px] text-muted mt-2 mb-3">※ AI（Gemini）が動画の内容から作った要約です。正確さは元動画で確認してください。</div>
+        ${linkBox(vurl)}`
+      : `<div class="rounded-lg border border-dashed border-line p-4 text-xs text-muted mb-3">元動画の要約は、AI（Gemini）の設定後に毎日少しずつ自動で作られます。それまでは下の参考ソースから元動画を探せます。</div>`}
+      <div class="text-xs font-bold text-muted mt-4 mb-2">参考ソース</div>
+      <ul class="space-y-2">${k.src.map(([n, d, q]) => `<li class="text-sm"><div class="font-bold">${esc(n)}</div><div class="text-[11px] text-muted mb-1">${esc(d)}</div>${miniLink(ytSearchUrl(q), 'YouTube検索')}</li>`).join('')}</ul>
     </aside>
   </div>`;
-  $('#kback').onclick = () => { S.kopen = null; renderKnow(); };
-  $('#vidSave').onclick = () => {
-    const id = parseVid($('#vidIn').value);
-    if (!id) return toast('URLまたは動画IDを確認してください');
-    const m = vidStore(); m[k.id] = id; store.set('vtb_kvid', m); renderKnow(); toast('元動画を登録しました');
-  };
-  const del = $('#vidDel'); if (del) del.onclick = () => { const m = vidStore(); delete m[k.id]; store.set('vtb_kvid', m); renderKnow(); };
 }
 
 /* =====================================================================
-   7. ブックマーク
+   10. ブックマーク
    ===================================================================== */
 function renderBM() {
-  const tv = Object.values(BM.trend).map(v => ({ ...v, published: new Date(v.published) }));
+  const vs = Object.values(BM.v).map(v => S.data.videos[v.id] || enrich({ ...v }));
   const av = ARCH.filter(a => BM.arch[a.id]), kv = KNOW.filter(k => BM.know[k.id]);
-  const empty = !tv.length && !av.length && !kv.length;
-  $('#view-bm').innerHTML = empty ? `<div class="text-center text-muted py-20">まだ何も保存されていません。<br>各カードの ☆ を押すと、ここにまとまります（このブラウザ内に保存）。</div>` : `
-    ${tv.length ? `<h2 class="font-black mb-2">トレンド動画 <span class="text-xs text-muted font-normal">${tv.length}</span></h2><ol class="flex flex-col gap-2 mb-6">${tv.map((v, i) => trendRow(v, i)).join('')}</ol>` : ''}
+  $('#view-bm').innerHTML = (!vs.length && !av.length && !kv.length) ? emptyBox('まだ何も保存されていません。<br>各カードの ☆ を押すと、ここにまとまります（このブラウザ内に保存）。') : `
+    ${vs.length ? `<h2 class="font-black mb-2">動画 <span class="text-xs text-muted font-normal">${vs.length}</span></h2><ol class="flex flex-col gap-2 mb-6">${vs.map((v, i) => videoRow(v, i)).join('')}</ol>` : ''}
     ${av.length ? `<h2 class="font-black mb-2">過去の流行 <span class="text-xs text-muted font-normal">${av.length}</span></h2><div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">${av.map(archCard).join('')}</div>` : ''}
-    ${kv.length ? `<h2 class="font-black mb-2">解説ナレッジ <span class="text-xs text-muted font-normal">${kv.length}</span></h2><div class="grid md:grid-cols-2 gap-3">${kv.map(k => `<article class="bg-panel border border-line rounded-xl p-4 cursor-pointer hover:border-neon/40" data-kopen="${k.id}"><div class="flex justify-between"><span class="text-[11px] text-neon font-bold">${KCAT[k.cat]}</span><button class="text-lg text-pink" data-bm-know="${k.id}">★</button></div><h3 class="font-black mt-1">${esc(k.title)}</h3></article>`).join('')}</div>` : ''}`;
+    ${kv.length ? `<h2 class="font-black mb-2">解説ナレッジ <span class="text-xs text-muted font-normal">${kv.length}</span></h2><div class="grid md:grid-cols-2 gap-3">${kv.map(k => `<article class="clickable bg-panel border border-line rounded-xl p-4" data-kopen="${k.id}"><div class="flex justify-between"><span class="text-[11px] text-neon font-bold">${KCAT[k.cat]}</span><button class="text-lg text-pink" data-bm-know="${k.id}">★</button></div><h3 class="font-black mt-1">${esc(k.title)}</h3></article>`).join('')}</div>` : ''}`;
 }
 
 /* =====================================================================
-   8. 画面切り替え・イベント
+   11. ポップアウト
+   ===================================================================== */
+const mStack = [];
+function openModal(title, html, push = true) {
+  if (push) mStack.push([title, html]);
+  $('#mTitle').textContent = title; $('#mBody').innerHTML = html;
+  $('#mBack').classList.toggle('hidden', mStack.length < 2);
+  $('#modal').classList.remove('hidden'); $('#modal .sheet').scrollTop = 0;
+  document.body.style.overflow = 'hidden';
+}
+function closeModal() { mStack.length = 0; $('#modal').classList.add('hidden'); document.body.style.overflow = ''; }
+function backModal() { mStack.pop(); const t = mStack[mStack.length - 1]; if (t) openModal(t[0], t[1], false); else closeModal(); }
+function stat(label, val, sub = '') { return `<div class="bg-void border border-line rounded-lg p-2.5"><div class="text-[10px] text-muted">${label}</div><div class="font-mono font-bold">${val}</div>${sub ? `<div class="text-[10px] text-muted">${sub}</div>` : ''}</div>`; }
+const durText = s => s >= 3600 ? `${Math.floor(s/3600)}時間${Math.round(s%3600/60)}分` : s >= 60 ? `${Math.round(s/60)}分` : `${s}秒`;
+function videoModalHTML(v) {
+  const d = Math.max(ageDays(v), 0.05), on = !!BM.v[v.id];
+  const ai = S.data.aiBuzz && S.data.aiBuzz[v.id];
+  return `
+    <div class="relative rounded-xl overflow-hidden mb-3">${thumbHTML(v, 'w-full aspect-video')}${fmtBadge(v, 'absolute top-2 left-2')}</div>
+    <h2 class="font-black text-lg leading-snug mb-1">${esc(v.title)}</h2>
+    <div class="text-sm text-muted mb-3">${esc(v.ch)}・登録者 ${fmt(v.subs)}・${ago(v.published)}</div>
+    <div class="grid grid-cols-3 gap-2 mb-4">
+      ${stat('再生数', fmt(v.views))}${stat('伸び率', v.ratio != null ? '×' + v.ratio.toFixed(1) : '—', '再生÷登録者')}${stat('1日あたり', fmt(v.views / d), '再生')}
+      ${stat('高評価率', v.views ? (v.likes / v.views * 100).toFixed(1) + '%' : '—')}${stat('コメント率', v.views ? (v.comments / v.views * 100).toFixed(2) + '%' : '—')}${stat(v.live != null ? '同時接続' : '長さ', v.live != null ? fmt(v.live) : durText(v.dur))}
+    </div>
+    <h3 class="font-black mb-2">🔎 伸びた理由・経緯</h3>
+    ${ai ? `<div class="bg-neon/5 border border-neon/30 rounded-xl p-3 mb-3"><div class="text-[10px] font-bold text-neon mb-1">AI分析（推定）</div><p class="text-sm leading-relaxed">${esc(ai)}</p></div>` : ''}
+    <ul class="space-y-2 mb-4">${ruleReasons(v).map(([ic, h, p]) => `<li class="flex gap-3 bg-void border border-line rounded-lg p-3"><span class="text-xl leading-none">${ic}</span><div><div class="font-bold text-sm">${esc(h)}</div><p class="text-xs text-ink/75 leading-relaxed mt-0.5">${esc(p)}</p></div></li>`).join('')}</ul>
+    <div class="flex items-center justify-between mb-4 bg-void border border-line rounded-lg p-3"><div class="text-xs text-muted">チャンネル登録者推移</div>${spark(subsHist(v), 120, 28)}</div>
+    <h3 class="font-black mb-2">🔗 リンク</h3>
+    ${linkBox(v.url)}
+    <div class="mt-2">${miniLink('https://www.youtube.com/channel/' + v.chId, 'チャンネル')}</div>
+    <button class="w-full mt-4 border ${on ? 'border-pink text-pink' : 'border-line'} rounded-lg py-2 font-bold text-sm" data-bm-v="${esc(v.id)}">${on ? '★ 保存済み（タップで解除）' : '☆ ブックマークに保存'}</button>`;
+}
+function openVideo(id) {
+  const v = V(id) || (BM.v[id] && enrich({ ...BM.v[id] })); if (!v) return;
+  openModal(FMT_LABEL[v.fmt] + 'の詳細', videoModalHTML(v));
+}
+function openToken(k, g) {
+  const t = (S.data.tokens[g] || []).find(x => (x.k || x.w.toLowerCase()) === k); if (!t) return;
+  const rs = tokenReason(t, g), vids = t.top.map(V).filter(Boolean);
+  openModal('今の流行', `
+    <div class="flex items-center gap-2 mb-1">${t.st ? `<span class="text-[11px] font-bold border rounded px-1.5 py-0.5 ${ST[t.st][1]}">${ST[t.st][0]}</span>` : ''}<span class="text-xs text-muted">${GENRES.find(x => x.id === g).label}</span></div>
+    <h2 class="font-black text-2xl mb-3">${esc(t.w)}</h2>
+    <div class="grid grid-cols-3 gap-2 mb-4">${stat('動画数', t.n + '本', '直近7日')}${stat('合計再生', fmt(t.views))}${stat('これまで', t.prev != null ? t.prev + '本' : '—', '過去の平均')}</div>
+    <h3 class="font-black mb-2">🔎 流行の理由・経緯</h3>
+    ${rs.ai ? `<div class="bg-neon/5 border border-neon/30 rounded-xl p-3 mb-2"><div class="text-[10px] font-bold text-neon mb-1">AI分析（推定）</div><p class="text-sm leading-relaxed">${esc(rs.ai)}</p></div>` : ''}
+    <p class="text-sm leading-relaxed bg-void border border-line rounded-lg p-3 mb-4">${esc(rs.rule)}${t.fm && (t.fm.video + t.fm.stream + t.fm.short) ? ` 形式別では 動画${t.fm.video}本・配信${t.fm.stream}本・ショート${t.fm.short}本。` : ''}</p>
+    <h3 class="font-black mb-2">🎬 代表的な動画 <span class="text-xs font-normal text-muted">タップで詳細</span></h3>
+    <ol class="flex flex-col gap-2 mb-4">${vids.map((v, i) => `<li class="clickable flex gap-3 items-center bg-void border border-line rounded-lg p-2" data-vid="${esc(v.id)}">
+      <span class="w-5 text-center font-mono text-xs text-muted">${i+1}</span><div class="relative shrink-0">${thumbHTML(v, 'w-24 aspect-video rounded')}${fmtBadge(v)}</div>
+      <div class="flex-1 min-w-0"><div class="text-xs font-bold line-clamp-2">${esc(v.title)}</div><div class="text-[11px] text-muted mt-0.5">${esc(v.ch)}・${fmt(v.views)}回</div></div>${ratioBadge(v.ratio)}</li>`).join('')}</ol>
+    <h3 class="font-black mb-2">🔗 このワードで検索</h3>${linkBox(ytSearchUrl('VTuber ' + t.w), 'YouTubeで検索')}`);
+}
+
+/* =====================================================================
+   12. 画面切り替え・イベント
    ===================================================================== */
 function render() {
   $$('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === S.tab));
   $$('.view').forEach(v => v.classList.toggle('hidden', v.id !== 'view-' + S.tab));
-  ({ trend: renderTrend, archive: renderArchive, know: renderKnow, bm: renderBM })[S.tab]();
+  ({ rising: () => renderRanking($('#view-rising'), true), trend: () => renderRanking($('#view-trend'), false),
+     words: renderWords, content: renderContent, know: renderKnow, bm: renderBM })[S.tab]();
 }
 function setMode() {
   const live = S.mode === 'live';
@@ -642,40 +807,66 @@ function setMode() {
     : 'SAMPLE';
   $('#modeDot').className = 'w-2 h-2 rounded-full ' + (live ? 'bg-lime' : 'bg-amber');
 }
+function toggleBM(kind, id) {
+  if (BM[kind][id]) { delete BM[kind][id]; toast('ブックマークを外しました'); }
+  else {
+    if (kind === 'v') { const v = V(id); if (!v) return; BM.v[id] = { id:v.id, title:v.title, ch:v.ch, chId:v.chId, subs:v.subs, views:v.views, likes:v.likes, comments:v.comments, published:v.published, dur:v.dur, stream:v.stream, live:v.live }; }
+    else BM[kind][id] = 1;
+    toast('★ 保存しました');
+  }
+  saveBM();
+}
 
-$$('.tab').forEach(t => t.onclick = () => { S.tab = t.dataset.tab; store.set('vtb_tab', S.tab); render(); window.scrollTo(0, 0); });
-let qT; $('#q').addEventListener('input', e => { clearTimeout(qT); qT = setTimeout(() => { S.q = e.target.value.trim(); if (S.tab === 'know') S.kopen = null; render(); }, 150); });
+$$('.tab').forEach(t => t.onclick = () => { S.tab = t.dataset.tab; S.kopen = null; store.set('vtb_tab2', S.tab); render(); window.scrollTo(0, 0); });
+let qT; $('#q').addEventListener('input', e => { clearTimeout(qT); qT = setTimeout(() => { S.q = e.target.value.trim(); render(); }, 150); });
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-format],[data-genre],[data-arch],[data-kcat],[data-kopen],[data-bm-trend],[data-bm-arch],[data-bm-know]');
+  const t = e.target.closest('[data-close],#mBack,[data-copy],[data-bm-v],[data-bm-arch],[data-bm-know],[data-genre],[data-format],[data-cap],[data-kwsrc],[data-kwgenre],[data-cttab],[data-ctgenre],[data-ctformat],[data-arch],[data-kcat],[data-kback],[data-kopen],[data-tok],[data-vid]');
   if (!t) return;
-  if (t.dataset.bmTrend !== undefined) {
-    e.preventDefault(); e.stopPropagation();
-    const id = t.dataset.bmTrend;
-    if (BM.trend[id]) { delete BM.trend[id]; toast('ブックマークを外しました'); }
-    else { const v = S.videos.find(x => x.id === id); if (v) { BM.trend[id] = v; toast('★ 保存しました'); } }
-    saveBM(); return render();
+  const d = t.dataset;
+  if (d.close !== undefined) return closeModal();
+  if (t.id === 'mBack') return backModal();
+  if (d.copy !== undefined) { e.stopPropagation(); return copyText(d.copy, d.copymsg || 'URLをコピーしました'); }
+  if (d.bmV !== undefined) {
+    e.stopPropagation(); toggleBM('v', d.bmV);
+    // ポップアウト内のボタンなら表示を更新（履歴は増やさない）
+    if (!$('#modal').classList.contains('hidden') && t.closest('#modal')) {
+      const v = V(d.bmV) || (BM.v[d.bmV] && enrich({ ...BM.v[d.bmV] }));
+      if (v) { const html = videoModalHTML(v); mStack[mStack.length - 1] = [mStack[mStack.length - 1][0], html]; $('#mBody').innerHTML = html; }
+    }
+    return render();
   }
-  if (t.dataset.bmArch !== undefined) { e.stopPropagation(); const id = t.dataset.bmArch; BM.arch[id] ? delete BM.arch[id] : BM.arch[id] = 1; toast(BM.arch[id] ? '★ 保存しました' : 'ブックマークを外しました'); saveBM(); return render(); }
-  if (t.dataset.bmKnow !== undefined) { e.stopPropagation(); const id = t.dataset.bmKnow; BM.know[id] ? delete BM.know[id] : BM.know[id] = 1; toast(BM.know[id] ? '★ 保存しました' : 'ブックマークを外しました'); saveBM(); return render(); }
-  if (t.dataset.format) { S.format = t.dataset.format; return renderTrend(); }
-  if (t.dataset.genre) { S.genre = t.dataset.genre; pickVideos(); return renderTrend(); }
-  if (t.dataset.arch) { const k = t.dataset.arch; S.arch[k] = k === 'year' && t.dataset.val !== 'all' ? +t.dataset.val : t.dataset.val; return renderArchive(); }
-  if (t.dataset.kcat) { S.kcat = t.dataset.kcat; return renderKnow(); }
-  if (t.dataset.kopen) { S.kopen = t.dataset.kopen; S.tab = 'know'; render(); return window.scrollTo(0, 0); }
+  if (d.bmArch !== undefined) { e.stopPropagation(); toggleBM('arch', d.bmArch); return render(); }
+  if (d.bmKnow !== undefined) { e.stopPropagation(); toggleBM('know', d.bmKnow); return render(); }
+  if (d.genre) { S.genre = d.genre; return render(); }
+  if (d.format) { S.format = d.format; return render(); }
+  if (d.cap) { S.cap = +d.cap; return render(); }
+  if (d.kwsrc) { S.kw.src = d.kwsrc; return render(); }
+  if (d.kwgenre) { S.kw.genre = d.kwgenre; return render(); }
+  if (d.cttab) { S.ct.tab = d.cttab; return render(); }
+  if (d.ctgenre) { S.ct.genre = d.ctgenre; return render(); }
+  if (d.ctformat) { S.ct.format = d.ctformat; return render(); }
+  if (d.arch) { S.arch[d.arch] = d.arch === 'year' && d.val !== 'all' ? +d.val : d.val; return render(); }
+  if (d.kcat) { S.kcat = d.kcat; return render(); }
+  if (d.kback !== undefined) { S.kopen = null; return render(); }
+  if (d.kopen) { S.kopen = d.kopen; S.tab = 'know'; render(); return window.scrollTo(0, 0); }
+  if (d.tok) return openToken(d.tok, d.tokg);
+  if (d.vid) return openVideo(d.vid);
 });
 document.addEventListener('change', e => {
-  if (e.target.id === 'sortSel') { S.sort = e.target.value; renderTrend(); }
-  if (e.target.id === 'periodSel') { S.period = +e.target.value; pickVideos(); renderTrend(); }
-  if (e.target.id === 'vtOnly') { S.vtOnly = e.target.checked; pickVideos(); renderTrend(); }
-  if (e.target.id === 'archSort') { S.arch.sort = e.target.value; renderArchive(); }
+  const k = e.target.dataset.set; if (!k) return;
+  if (k === 'sort') S.sort = e.target.value;
+  if (k === 'period') S.period = +e.target.value;
+  if (k === 'archsort') S.arch.sort = e.target.value;
+  render();
 });
+document.addEventListener('focusin', e => { if (e.target.matches('[data-selectall]')) e.target.select(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
-// 起動
 (async () => {
   updateBMCount();
   await loadData();
-  pickVideos(); setMode(); render();
+  setMode(); render();
 })();
 </script>
 </body>
