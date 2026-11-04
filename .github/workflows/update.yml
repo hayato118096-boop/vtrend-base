@@ -12,6 +12,7 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +24,8 @@ jobs:
         run: node scripts/update.mjs
         env:
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          # 任意：設定すると AI（Gemini 無料枠）で理由・要約を作る
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
       - name: Commit data.json
         run: |
