@@ -5,6 +5,11 @@ on:
     # 毎日 0:17（日本時間）＝ 15:17（UTC）。GitHub側の混雑で数十分遅れることがあります
     - cron: '17 15 * * *'
   workflow_dispatch: # Actions画面の「Run workflow」ボタンから手動実行もできる
+    inputs:
+      ai_only:
+        description: 'AIの理由・要約だけ作り直す（YouTubeの無料枠をほぼ使わない）'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -12,7 +17,7 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +31,7 @@ jobs:
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
           # 任意：設定すると AI（Gemini 無料枠）で理由・要約を作る
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          AI_ONLY: ${{ inputs.ai_only }}
 
       - name: Commit data.json
         run: |
