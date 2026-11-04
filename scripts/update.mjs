@@ -419,6 +419,7 @@ async function gemini(parts) {
 }
 const aiBuzz = {};
 const aiTok = {};
+let out_kb = Array.isArray(prev.kb) ? prev.kb : [];
 const know = { ...(prev.know || {}) };
 const ratioOf = v => v.subs ? v.views / v.subs : 0;
 if (GEM) {
@@ -461,25 +462,58 @@ if (GEM) {
     }
     await sleep(7000);
   }
-  // 7-3. 解説ナレッジの元動画を探して要約（未作成のものを1回2本まで）
-  const todoK = Object.keys(KNOW_SRC).filter(k => !know[k]).slice(0, 2);
-  for (const k of todoK) {
+  // 7-3. 解説動画の要約：1日2本ずつ蓄積
+  //      まだ要約がない解説記事（KNOW_SRC）を先に埋め、その後はテーマを日替わりで回して「要約ライブラリ」に追加
+  const SUMMARY_PROMPT = 'この動画の内容を日本語で要約してください。出力はJSONのみ: ' +
+    '{"summary":["3行要約の1行目","2行目","3行目"],"points":[{"h":"見出し","p":"説明（2〜3文）"}],"forVtuber":["VTuber・配信者がすぐ実践できること"]}。' +
+    'points は4〜6個、forVtuber は2〜3個。動画で実際に話されている内容だけを書いてください。';
+  const KB_TOPICS = [
+    { cat: 'algo',   q: ['YouTube algorithm explained', 'YouTube アルゴリズム 解説', 'how YouTube recommends videos'] },
+    { cat: 'thumb',  q: ['YouTube thumbnail tips', 'YouTube タイトル サムネ 伸ばし方', 'YouTube packaging title thumbnail'] },
+    { cat: 'short',  q: ['YouTube Shorts strategy', 'YouTubeショート 伸ばし方', 'YouTube Shorts retention tips'] },
+    { cat: 'mental', q: ['YouTuber burnout advice', 'creator mental health YouTube', 'YouTube 続ける コツ'] },
+    { cat: 'live',   q: ['how to grow a VTuber channel', 'VTuber 配信 伸ばし方', 'YouTube live stream growth tips', '個人VTuber 伸ばし方'] },
+  ];
+  let kb = Array.isArray(prev.kb) ? prev.kb.slice() : [];
+  const usedVid = new Set([...kb.map(x => x.id), ...Object.values(know).map(x => x.id)]);
+  const dayNo = Math.floor(now / 864e5);
+  let slots = 2;
+  const summarize = async (vid) => gemini([{ file_data: { file_uri: `https://www.youtube.com/watch?v=${vid}` } }, { text: SUMMARY_PROMPT }]);
+  const pickVideo = async (q) => {
+    const s = await yt('search', { part: 'snippet', type: 'video', q, maxResults: 10, videoDuration: 'medium', order: 'relevance', publishedAfter: after(730) }, 100);
+    return (s.items || []).find(it => it.id && it.id.videoId && !usedVid.has(it.id.videoId));
+  };
+  // (a) 解説記事の元動画
+  for (const k of Object.keys(KNOW_SRC).filter(k => !know[k])) {
+    if (slots <= 0) break;
+    slots--;
     try {
-      const s = await yt('search', { part: 'snippet', type: 'video', q: KNOW_SRC[k], maxResults: 5, videoDuration: 'medium', order: 'relevance' }, 100);
-      const it = (s.items || [])[0];
+      const it = await pickVideo(KNOW_SRC[k]);
       if (!it) continue;
-      const vid = it.id.videoId;
-      const res = await gemini([
-        { file_data: { file_uri: `https://www.youtube.com/watch?v=${vid}` } },
-        { text: 'この動画の内容を日本語で要約してください。出力はJSONのみ: ' +
-          '{"summary":["3行要約の1行目","2行目","3行目"],"points":[{"h":"見出し","p":"説明（2〜3文）"}],"forVtuber":["VTuber・配信者がすぐ実践できること"]}。' +
-          'points は4〜6個、forVtuber は2〜3個。動画で実際に話されている内容だけを書いてください。' },
-      ]);
+      const vid = it.id.videoId; usedVid.add(vid);
+      const res = await summarize(vid);
       know[k] = { id: vid, title: it.snippet.title, ch: it.snippet.channelTitle, ...res, made: day };
       console.log(`OK   gemini know ${k}: ${vid}`);
     } catch (e) { console.warn(`FAIL gemini know ${k}: ${e.message}`); }
     await sleep(7000);
   }
+  // (b) 要約ライブラリ（テーマ日替わり）
+  for (let i = 0; slots > 0 && i < 4; i++) {
+    const topic = KB_TOPICS[(dayNo * 2 + i) % KB_TOPICS.length];
+    const q = topic.q[(dayNo + i) % topic.q.length];
+    slots--;
+    try {
+      const it = await pickVideo(q);
+      if (!it) continue;
+      const vid = it.id.videoId; usedVid.add(vid);
+      const res = await summarize(vid);
+      kb.unshift({ id: vid, title: it.snippet.title, ch: it.snippet.channelTitle, cat: topic.cat, q, ...res, made: day });
+      console.log(`OK   gemini kb ${topic.cat}: ${vid}`);
+    } catch (e) { console.warn(`FAIL gemini kb ${topic.cat}: ${e.message}`); }
+    await sleep(7000);
+  }
+  kb = kb.slice(0, 500);
+  out_kb = kb;
 } else {
   console.log('GEMINI_API_KEY なし：AIによる理由・要約はスキップ（画面ではルールベースの理由を表示）');
 }
@@ -488,7 +522,7 @@ if (GEM) {
 const out = {
   updated: AI_ONLY ? prev.updated : new Date(now).toISOString(), units, ai: !!GEM,
   pools, videos, histDays, subs, tokens, tokHist,
-  suggest: suggestOut, gtrends, aiBuzz, aiTok, know, steam, classic,
+  suggest: suggestOut, gtrends, aiBuzz, aiTok, know, kb: out_kb, steam, classic,
 };
 await writeFile(OUT, JSON.stringify(out));
 console.log(`完了: 動画${Object.keys(videos).length}本 / 使用ユニット 約${units}${GEM ? ` / AIモデル ${MODELS[mi]}` : ''}`);
