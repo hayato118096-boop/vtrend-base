@@ -63,20 +63,21 @@ tailwind.config = {
   <nav class="max-w-7xl mx-auto px-2 mt-2 flex overflow-x-auto no-scrollbar" role="tablist">
     <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="rising" role="tab">🌱 伸び盛り</button>
     <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="trend" role="tab">📈 トレンド</button>
+    <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="clip" role="tab">✂️ 切り抜き</button>
     <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="words" role="tab">🔍 <span class="hidden sm:inline">検索</span>ワード</button>
     <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="content" role="tab">🔥 コンテンツ</button>
     <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="know" role="tab">🌐 <span class="hidden sm:inline">解説</span>ナレッジ</button>
-    <button class="tab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-tab="bm" role="tab">★ <span class="hidden sm:inline">ブックマーク</span><span class="sm:hidden">保存</span> <span id="bmCount" class="ml-1 text-[10px] font-mono bg-pink/15 text-pink rounded px-1.5 py-0.5">0</span></button>
   </nav>
 </header>
 
 <main class="max-w-7xl mx-auto px-4 py-5 pb-20">
   <section id="view-rising" class="view"></section>
   <section id="view-trend" class="view hidden"></section>
+  <section id="view-clip" class="view hidden"></section>
   <section id="view-words" class="view hidden"></section>
   <section id="view-content" class="view hidden"></section>
   <section id="view-know" class="view hidden"></section>
-  <section id="view-bm" class="view hidden"></section>
+
 </main>
 
 <!-- ポップアウト -->
@@ -166,6 +167,7 @@ function miniLink(url, text) {
 const GENRES = [
   { id:'all',  label:'すべて' },
   { id:'game', label:'ゲーム' },
+  { id:'horror', label:'👻 ホラー' },
   { id:'song', label:'歌ってみた' },
   { id:'talk', label:'雑談' },
   { id:'plan', label:'企画' },
@@ -188,7 +190,7 @@ const ST = { new:['✨ 新登場','text-pink border-pink/40 bg-pink/10'], up:['�
 const STOP = new Set(['vtuber','vtubers','新人vtuber','個人vtuber','vtuber準備中','新人vtuber準備中','shorts','short','ショート','切り抜き','ホロライブ','にじさんじ','hololive','nijisanji','ぶいすぽ','歌ってみた','cover','covered by','歌枠','雑談','雑談配信','ゲーム実況','実況','初見','初見プレイ','初見実況','ネタバレ注意','縦型配信','縦型','配信','live','ライブ配信','生配信','新人','おすすめ','fyp','viral','女性実況','男性vtuber','女性vtuber','vtuber好きと繋がりたい','jpvtuber','envtuber','music','mv','ゲーム','企画','shorts動画','youtube','youtubeshorts','ytshorts','trending','funny','anime','アニメ','live2d','3d','asmr配信']);
 function tokenize(title) {
   const t = String(title || '').normalize('NFKC'), out = new Map();
-  const add = w => { w = w.trim().replace(/\s+/g, ' '); const k = w.toLowerCase();
+  const add = w => { w = w.trim().replace(/^#+/, '').replace(/\s+/g, ' '); const k = w.toLowerCase();
     if (w.length < 2 || w.length > 24 || /^[\d\s.\-#]+$/.test(w) || STOP.has(k) || k.endsWith('切り抜き') || k.startsWith('vtuber')) return;
     if (!out.has(k)) out.set(k, w); };
   for (const m of t.matchAll(/【([^】]+)】/g)) m[1].split(/[\/|・,、]/).forEach(add);
@@ -201,19 +203,20 @@ function tokenize(title) {
    2. 状態
    ===================================================================== */
 const S = {
-  tab: store.get('vtb_tab2', 'rising'),
+  tab: ['rising','trend','clip','words','content','know'].includes(store.get('vtb_tab2', 'rising')) ? store.get('vtb_tab2', 'rising') : 'rising',
   data: null, mode: 'demo',
   genre: 'all', format: 'all', period: 7, sort: 'ratio', cap: 200000,
   q: '',
   kw: { src: 'tokens', genre: 'all' },
-  ct: { tab: 'now', genre: 'all', format: 'all' },
+  ct: { tab: 'now', genre: 'all', format: 'all', gmode: 'soon', ggenre: 'all', cgenre: 'all' },
+  clip: { view: 'ch', range: 'all', fmt: 'all', period: 7, sort: 'subs' },
   arch: { year:'all', genre:'all', type:'all', revival:'all', sort:'new' },
   kcat: 'all', kopen: null,
 };
 let BM = store.get('vtb_bm2', null);
 if (!BM) { const o = store.get('vtb_bm', {}); BM = { v: o.trend || {}, arch: o.arch || {}, know: o.know || {} }; }
 const saveBM = () => { store.set('vtb_bm2', BM); updateBMCount(); };
-const updateBMCount = () => { $('#bmCount').textContent = Object.keys(BM.v).length + Object.keys(BM.arch).length + Object.keys(BM.know).length; };
+const updateBMCount = () => { const el = $('#bmCount'); if (el) el.textContent = Object.keys(BM.v).length + Object.keys(BM.arch).length + Object.keys(BM.know).length; };
 
 /* =====================================================================
    3. データ読み込み（data.json は GitHub Actions が毎日0時過ぎに生成）
@@ -235,8 +238,13 @@ async function loadData() {
     const d = await r.json();
     if (!d.pools) throw new Error('old format');
     Object.values(d.videos).forEach(enrich);
+    for (const g of Object.keys(d.tokens || {})) {
+      d.tokens[g].forEach(t => { t.top = t.top.filter(id => isJP(d.videos[id])); });
+      d.tokens[g] = d.tokens[g].filter(t => t.top.length);
+    }
     S.data = d; S.mode = 'live';
   } catch (e) { S.data = demoData(); S.mode = 'demo'; }
+  try { const r = await fetch('classics.json', { cache: 'no-cache' }); if (r.ok) CLASSICS = await r.json(); } catch (e) {}
 }
 
 /* 架空のサンプル（data.json が無いときだけ使用） */
@@ -269,6 +277,21 @@ function demoData() {
     pools[`${g.id}|${f}|30`] = base.sort((a,b) => b.views - a.views).slice(0, 50).map(v => v.id);
     pools[`${g.id}|${f}|new`] = base.filter(v => Date.now() - v.published < 7*DAY).sort((a,b) => b.published - a.published).slice(0, 50).map(v => v.id);
   }
+  // サンプルの切り抜き動画
+  ['てぇてぇ切り抜きch','VTuber名場面切り抜き堂','ぶいぶい切り抜き'].forEach((name, ci) => {
+    const subs = [8000, 64000, 420000][ci];
+    for (let i = 0; i < 12; i++) {
+      const id = `demo-clip-${ci}-${i}`, f = r() < 0.5 ? 'short' : 'video', views = Math.round(subs * (0.2 + r()*3));
+      videos[id] = enrich({ id, title: `【切り抜き】${chans[Math.floor(r()*chans.length)].name}の神回まとめ ${i+1}`, ch:name, chId:'demo-clipch-'+ci, subs, views,
+        likes: Math.round(views*0.04), comments: Math.round(views*0.003), published: new Date(Date.now() - r()*25*DAY).toISOString(),
+        dur: f === 'short' ? 45 : 600, stream:false, live:null, demo:true, genre:'talk' });
+    }
+  });
+  const clipAll = Object.values(videos).filter(v => v.id.startsWith('demo-clip'));
+  for (const f of ['video','short']) {
+    pools[`clip|${f}|7`] = clipAll.filter(v => v.fmt === f && Date.now() - v.published < 7*DAY).map(v => v.id);
+    pools[`clip|${f}|30`] = clipAll.filter(v => v.fmt === f).map(v => v.id);
+  }
   const tokens = {};
   for (const g of GENRES) {
     const agg = new Map();
@@ -289,6 +312,11 @@ function demoData() {
 const V = id => S.data.videos[id];
 const ageDays = v => (Date.now() - v.published) / DAY;
 const matchQ = v => !S.q || (v.title + v.ch).toLowerCase().includes(S.q.toLowerCase());
+// 日本の動画だけ：タイトルに日本語（かな・漢字）がある、または音声言語が日本語
+const JA = /[぀-ヿ一-鿿]/;
+const isJP = v => !!v && (JA.test(v.title || '') || /^ja/i.test(v.lang || ''));
+// 切り抜き：タイトルかチャンネル名に「切り抜き」「clip」など（トレンド・伸び盛りからは外して、切り抜きタブにまとめる）
+const isClip = v => /切り抜き|切抜き|きりぬき|\bclips?\b/i.test((v.title || '') + ' ' + (v.ch || ''));
 const SORTFN = {
   ratio:  (a, b) => (b.ratio ?? -1) - (a.ratio ?? -1),
   views:  (a, b) => b.views - a.views,
@@ -299,7 +327,7 @@ const SORTFN = {
 function buildList({ genre, format, period, cap = null, sort = 'ratio', minViews = 0, limit = 50 }) {
   const P = S.data.pools, fmts = format === 'all' ? ['video','stream','short'] : [format];
   const seen = new Set(), main = [], sup = [];
-  const ok = v => v && (!cap || (v.subs != null && v.subs <= cap)) && v.views >= minViews && matchQ(v);
+  const ok = v => isJP(v) && !isClip(v) && (!cap || (v.subs != null && v.subs <= cap)) && v.views >= minViews && matchQ(v);
   const push = (arr, id) => { if (seen.has(id)) return; const v = V(id); if (!ok(v)) return; seen.add(id); arr.push(v); };
   for (const f of fmts) {
     const src = period === 7 ? ['7','new'] : ['30','7','new'];
@@ -398,7 +426,7 @@ function videoRow(v, i, opt = {}) {
       <div class="text-[10px] text-muted">高評価率 ${eng}%${v.live != null ? `・同接 ${fmt(v.live)}` : ''}</div>
     </div>
     <div class="hidden md:flex flex-col items-center shrink-0 w-20" title="チャンネル登録者推移">${spark(subsHist(v))}<span class="text-[9px] text-muted">登録者推移</span></div>
-    <button class="shrink-0 text-xl ${on ? 'text-pink' : 'text-muted hover:text-ink'}" style="padding:4px" data-bm-v="${esc(v.id)}" aria-label="ブックマーク">${on ? '★' : '☆'}</button>
+
   </li>`;
 }
 const emptyBox = msg => `<div class="text-center text-muted py-16 bg-panel/60 border border-dashed border-line rounded-xl">${msg}</div>`;
@@ -446,8 +474,101 @@ function renderRanking(el, rising) {
 }
 
 /* =====================================================================
+   6.5 切り抜き
+   ===================================================================== */
+const CLIP_VIEWS = [{ id:'ch', label:'📺 チャンネル' }, { id:'vid', label:'🎬 動画' }];
+const CLIP_RANGES = [
+  { id:'all', label:'すべて',       min:0,   max:Infinity },
+  { id:'s',   label:'〜1万人',      min:0,   max:1e4 },
+  { id:'m',   label:'1万〜10万人',  min:1e4, max:1e5 },
+  { id:'l',   label:'10万〜50万人', min:1e5, max:5e5 },
+  { id:'xl',  label:'50万人〜',     min:5e5, max:Infinity },
+];
+const CLIP_FMTS = [{ id:'all', label:'すべて' }, { id:'video', label:'🎬 動画' }, { id:'short', label:'📱 ショート' }];
+const CLIP_SORTS = { ch: [['subs','登録者数'],['views','合計再生（期間内）'],['n','動画の本数']], vid: [['views','再生数'],['ratio','伸び率（再生÷登録者）'],['new','新しい順']] };
+function clipVideos({ ignoreRange = false, chId = null } = {}) {
+  const C = S.clip, r = CLIP_RANGES.find(x => x.id === C.range), seen = new Set(), out = [];
+  for (const ids of Object.values(S.data.pools)) for (const id of ids) {
+    if (seen.has(id)) continue; seen.add(id);
+    const v = V(id);
+    if (!v || !isJP(v) || !isClip(v) || ageDays(v) > C.period) continue;
+    if (chId) { if (v.chId === chId) out.push(v); continue; }
+    if (C.fmt !== 'all' && v.fmt !== C.fmt) continue;
+    if (!ignoreRange && C.range !== 'all' && (v.subs == null || v.subs < r.min || v.subs >= r.max)) continue;
+    if (!matchQ(v)) continue;
+    out.push(v);
+  }
+  return out;
+}
+function clipChannels(vs) {
+  const m = new Map();
+  vs.forEach(v => { const c = m.get(v.chId) || { chId:v.chId, ch:v.ch, subs:v.subs, vids:[], views:0 }; c.vids.push(v); c.views += v.views; m.set(v.chId, c); });
+  return [...m.values()].map(c => { c.vids.sort((a, b) => b.views - a.views); c.n = c.vids.length; return c; });
+}
+function renderClip() {
+  const el = $('#view-clip'), C = S.clip;
+  if (!CLIP_SORTS[C.view].some(s => s[0] === C.sort)) C.sort = CLIP_SORTS[C.view][0][0];
+  const vs = clipVideos();
+  let body;
+  if (C.view === 'ch') {
+    const sortFn = { subs:(a,b) => (b.subs ?? -1) - (a.subs ?? -1), views:(a,b) => b.views - a.views, n:(a,b) => b.n - a.n }[C.sort];
+    // 切り抜き専門っぽいチャンネルだけ：名前に「切り抜き」「clip」がある、または切り抜き動画が2本以上
+    const chs = clipChannels(vs).filter(c => /切り抜き|切抜き|きりぬき|clip/i.test(c.ch) || c.n >= 2).sort(sortFn).slice(0, 50);
+    body = chs.length ? `<ol class="grid lg:grid-cols-2 gap-2">${chs.map((c, i) => `
+      <li class="clickable bg-panel border border-line rounded-xl p-2 sm:p-3 flex gap-3 items-center" data-clipch="${esc(c.chId)}">
+        <span class="w-6 text-center font-mono font-bold ${i < 3 ? 'text-neon' : 'text-muted'}">${i + 1}</span>
+        <div class="relative shrink-0">${thumbHTML(c.vids[0], 'w-24 sm:w-28 aspect-video rounded-lg')}</div>
+        <div class="flex-1 min-w-0">
+          <div class="font-bold truncate">${esc(c.ch)}</div>
+          <div class="text-xs text-muted mt-0.5">登録者 <b class="text-ink font-mono">${fmt(c.subs)}</b>・動画 ${c.n}本・合計 ${fmt(c.views)}回</div>
+          <div class="text-[11px] text-muted truncate mt-0.5">人気：${esc(c.vids[0].title)}</div>
+        </div>
+        <div class="hidden sm:flex flex-col items-center shrink-0 w-20">${spark(S.data.subs && S.data.subs[c.chId])}<span class="text-[9px] text-muted">登録者推移</span></div>
+      </li>`).join('')}</ol>` : emptyBox('条件に合う切り抜きチャンネルがありません');
+  } else {
+    const list = vs.sort(SORTFN[C.sort]).slice(0, 50);
+    body = list.length ? `<ol class="flex flex-col gap-2">${list.map((v, i) => videoRow(v, i)).join('')}</ol>` : emptyBox('条件に合う切り抜き動画がありません');
+  }
+  const nCh = new Set(vs.map(v => v.chId)).size;
+  el.innerHTML = `
+  <div class="bg-panel border border-line rounded-xl p-3 sm:p-4 mb-4">
+    <div class="font-black">✂️ 切り抜きランキング</div>
+    <div class="text-xs text-muted mt-0.5">VTuberの切り抜きチャンネル・動画をまとめています（トレンド・伸び盛りには出しません）。直近${C.period}日で ${nCh}チャンネル・${vs.length}本。</div>
+  </div>
+  <div class="flex flex-col gap-3 mb-4">
+    ${seg(CLIP_VIEWS, C.view, 'data-clipview')}
+    <div class="flex items-center gap-2 overflow-x-auto no-scrollbar -mx-4 px-4"><span class="text-xs text-muted shrink-0">登録者</span>
+      ${CLIP_RANGES.map(r => `<button class="${chipCls} !px-3 !text-xs" data-cliprange="${r.id}" aria-pressed="${C.range === r.id}">${r.label}</button>`).join('')}</div>
+    ${seg(CLIP_FMTS, C.fmt, 'data-clipfmt')}
+    <div class="flex flex-wrap items-center gap-2 text-sm">
+      <select data-set="clipsort" class="bg-panel border border-line rounded-lg px-3 py-1.5">${CLIP_SORTS[C.view].map(([v, l]) => `<option value="${v}" ${C.sort === v ? 'selected' : ''}>並び: ${l}</option>`).join('')}</select>
+      <select data-set="clipperiod" class="bg-panel border border-line rounded-lg px-3 py-1.5">${[[7,'7日間'],[30,'30日間']].map(([d,l]) => `<option value="${d}" ${C.period === d ? 'selected' : ''}>期間: ${l}</option>`).join('')}</select>
+    </div>
+  </div>
+  ${body}`;
+}
+function openClipCh(chId) {
+  const vs = clipVideos({ chId }).sort((a, b) => b.views - a.views);
+  if (!vs.length) return;
+  const c = clipChannels(vs)[0];
+  const ratios = vs.map(v => v.ratio).filter(x => x != null);
+  openModal('切り抜きチャンネル', `
+    <div class="relative rounded-xl overflow-hidden mb-3">${thumbHTML(vs[0], 'w-full aspect-video')}</div>
+    <h2 class="font-black text-xl mb-3">${esc(c.ch)}</h2>
+    <div class="grid grid-cols-3 gap-2 mb-4">${stat('登録者', fmt(c.subs))}${stat('動画数', c.n + '本', `直近${S.clip.period}日`)}${stat('合計再生', fmt(c.views))}
+      ${stat('平均再生', fmt(c.views / c.n))}${stat('平均伸び率', ratios.length ? '×' + median(ratios).toFixed(1) : '—', '中央値')}${stat('ショート', vs.filter(v => v.fmt === 'short').length + '本')}</div>
+    <div class="flex items-center justify-between mb-4 bg-void border border-line rounded-lg p-3"><div class="text-xs text-muted">チャンネル登録者推移</div>${spark(S.data.subs && S.data.subs[c.chId], 120, 28)}</div>
+    <h3 class="font-black mb-2">🎬 切り抜き動画 <span class="text-xs font-normal text-muted">タップで詳細</span></h3>
+    <ol class="flex flex-col gap-2 mb-4">${vs.slice(0, 30).map((v, i) => `<li class="clickable flex gap-3 items-center bg-void border border-line rounded-lg p-2" data-vid="${esc(v.id)}">
+      <span class="w-5 text-center font-mono text-xs text-muted">${i+1}</span><div class="relative shrink-0">${thumbHTML(v, 'w-24 aspect-video rounded')}${fmtBadge(v)}</div>
+      <div class="flex-1 min-w-0"><div class="text-xs font-bold line-clamp-2">${esc(v.title)}</div><div class="text-[11px] text-muted mt-0.5">${fmt(v.views)}回・${ago(v.published)}</div></div>${ratioBadge(v.ratio)}</li>`).join('')}</ol>
+    <h3 class="font-black mb-2">🔗 チャンネル</h3>${linkBox('https://www.youtube.com/channel/' + c.chId, 'チャンネルを開く')}`);
+}
+
+/* =====================================================================
    7. 検索ワード
    ===================================================================== */
+const gDay = () => (S.data.updated ? new Date(new Date(S.data.updated).getTime() + 9 * 3600e3) : new Date()).toISOString().slice(0, 10);
 const KW_SRC = [
   { id:'tokens',  label:'🔥 話題ワード' },
   { id:'suggest', label:'🔍 検索候補' },
@@ -458,7 +579,7 @@ function renderWords() {
   const desc = {
     tokens: '直近7日のVTuber動画のタイトル（【】・『』・#タグ）によく出てくるワード。投稿数と再生数で順位付け。タップで関連動画と流行の理由を表示。',
     suggest: 'YouTubeの検索窓に出てくる候補（よく検索されている言葉）を集計した順位の目安です。正確な検索回数はYouTubeが公開していないため、候補の表示順から推定しています。',
-    google: '今日、日本のGoogle検索で急上昇しているワード（VTuber以外も含む全体）。',
+    google: '日本のGoogle検索で急上昇しているワード（VTuber以外も含む全体）。Googleは1日10〜20件しか公開していないため、直近数日分を合わせて最大50件表示しています。',
   }[K.src];
   let rows = '';
   const q = S.q.toLowerCase();
@@ -487,7 +608,7 @@ function renderWords() {
   } else {
     rows = (S.data.gtrends || []).filter(t => !q || t.w.toLowerCase().includes(q)).map((t, i) => `<li class="bg-panel border border-line rounded-xl px-3 py-2.5 flex items-center gap-3">
       <span class="w-6 text-center font-mono font-bold ${i < 3 ? 'text-neon' : 'text-muted'}">${i + 1}</span>
-      <div class="flex-1 min-w-0"><div class="font-bold truncate">${esc(t.w)}</div>${t.news ? `<div class="text-[11px] text-muted truncate">${esc(t.news)}</div>` : ''}</div>
+      <div class="flex-1 min-w-0"><div class="flex items-center gap-2"><span class="font-bold truncate">${esc(t.w)}</span>${t.d ? `<span class="shrink-0 text-[10px] border rounded px-1.5 py-0.5 ${t.d === gDay() ? 'text-pink border-pink/40 bg-pink/10 font-bold' : 'text-muted border-line'}">${t.d === gDay() ? '今日' : esc(t.d.slice(5).replace('-', '/'))}</span>` : ''}</div>${t.news ? `<div class="text-[11px] text-muted truncate">${esc(t.news)}</div>` : ''}</div>
       <span class="shrink-0 text-xs font-mono text-amber font-bold">${esc(t.traffic || '')}</span>
       <button class="shrink-0 text-muted hover:text-neon text-sm px-1" data-copy="${esc(t.w)}" data-copymsg="ワードをコピーしました">📋</button>
     </li>`).join('');
@@ -504,7 +625,94 @@ function renderWords() {
 /* =====================================================================
    8. コンテンツ（今の流行 / バズ動画 / 過去の流行）
    ===================================================================== */
-const CT_TABS = [ { id:'now', label:'🔥 今の流行' }, { id:'buzz', label:'🚀 バズ動画' }, { id:'past', label:'🗂 過去の流行' } ];
+const CT_TABS = [ { id:'now', label:'🔥 今の流行' }, { id:'buzz', label:'🚀 バズ動画' }, { id:'games', label:'🎮 新作ゲーム' }, { id:'classic', label:'👑 歴代名作' }, { id:'past', label:'🗂 過去の流行' } ];
+const STEAM_G = [ { id:'all', label:'すべて' }, { id:'horror', label:'👻 ホラー' }, { id:'action', label:'アクション' }, { id:'adventure', label:'アドベンチャー' }, { id:'rpg', label:'RPG' }, { id:'coop', label:'協力プレイ' }, { id:'sim', label:'シミュレーション' } ];
+const GMODES = [ { id:'soon', label:'📅 発売予定' }, { id:'new', label:'🆕 最近発売' } ];
+const CLASSIC_G = [ { id:'all', label:'すべて' }, { id:'rpg', label:'RPG' }, { id:'action', label:'アクション' }, { id:'horror', label:'👻 ホラー' }, { id:'adv', label:'アドベンチャー' }, { id:'shooter', label:'シューティング' }, { id:'sim', label:'シミュ・サンドボックス' }, { id:'party', label:'パズル・パーティー' }, { id:'fight', label:'格闘・レース' } ];
+const CG_LABEL = Object.fromEntries(CLASSIC_G.map(g => [g.id, g.label]));
+const normName = s => String(s || '').normalize('NFKC').toLowerCase().replace(/[™®©:：\-–—!！?？'’"“”\s]/g, '');
+let _titleIdx = null;
+function vtuberCount(name) {
+  if (!_titleIdx) _titleIdx = Object.values(S.data.videos).filter(isJP).map(v => normName(v.title));
+  const n = normName(name).slice(0, 16);
+  if (n.length < 3) return 0;
+  return _titleIdx.filter(t => t.includes(n)).length;
+}
+function pfBadges(pf) {
+  const out = [];
+  if (pf.windows) out.push('Windows'); if (pf.mac) out.push('Mac'); if (pf.linux) out.push('Linux');
+  return out.map(x => `<span class="text-[10px] font-bold border border-line rounded px-1.5 py-0.5 text-muted">${x}</span>`).join(' ');
+}
+function renderGames(C) {
+  const st = S.data.steam;
+  if (!st || !st.apps) return emptyBox('新作ゲームのデータはまだありません（次回の更新で取得されます）');
+  const q = S.q.toLowerCase();
+  const ids = ((st[C.gmode] || {})[C.ggenre] || []).filter(id => st.apps[id] && (!q || (st.apps[id].name + st.apps[id].desc).toLowerCase().includes(q)));
+  return `<div class="flex flex-col gap-3 mb-3">${seg(GMODES, C.gmode, 'data-gmode')}${chips(STEAM_G, C.ggenre, 'data-ggenre')}
+    <p class="text-xs text-muted">Steamで注目されている${C.gmode === 'soon' ? '発売予定' : '最近発売'}のゲーム（最大50件）。タップで詳細。※対応環境はSteam（PC）の情報です。PS5・Switchなどの対応はYouTubeや公式サイトで確認してください。</p></div>
+    ${ids.length ? `<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">${ids.map((id, i) => { const a = st.apps[id], vc = vtuberCount(a.name); return `
+      <article class="clickable bg-panel border border-line rounded-xl overflow-hidden flex flex-col" data-game="${esc(id)}">
+        <div class="relative"><img src="${esc(a.img)}" alt="" loading="lazy" class="w-full aspect-[460/215] object-cover bg-line">
+          <span class="absolute top-2 left-2 bg-ink/80 text-white font-mono font-bold text-xs rounded px-1.5 py-0.5">#${i + 1}</span>
+          ${vc ? `<span class="absolute top-2 right-2 bg-pink text-white text-[10px] font-bold rounded px-1.5 py-0.5">VTuber動画 ${vc}本</span>` : ''}</div>
+        <div class="p-3 flex-1 flex flex-col">
+          <h3 class="font-black text-sm mb-1 line-clamp-2">${esc(a.name)}</h3>
+          <div class="text-xs font-bold text-neon mb-1">📅 ${esc(a.date || '未定')}</div>
+          <div class="flex flex-wrap gap-1 mb-2">${pfBadges(a.pf)} ${(a.genres || []).slice(0, 3).map(gn => `<span class="text-[10px] bg-ink/5 rounded px-1.5 py-0.5 text-muted">${esc(gn)}</span>`).join(' ')}</div>
+          <p class="text-xs text-ink/75 leading-relaxed line-clamp-2 flex-1">${esc(a.desc)}</p>
+          ${a.price ? `<div class="text-xs font-bold mt-2">${esc(a.price)}</div>` : ''}
+        </div></article>`; }).join('')}</div>` : emptyBox('該当するゲームがありません')}`;
+}
+function openGame(id) {
+  const a = S.data.steam.apps[id]; if (!a) return;
+  const vc = vtuberCount(a.name);
+  openModal('新作ゲーム', `
+    <img src="${esc(a.img)}" alt="" class="w-full rounded-xl mb-3 bg-line">
+    <h2 class="font-black text-xl mb-2">${esc(a.name)}</h2>
+    <div class="grid grid-cols-2 gap-2 mb-3">${stat('発売日', esc(a.date || '未定'), a.soon ? '発売予定' : '発売済み')}${stat('価格', esc(a.price || '—'))}${stat('対応環境（Steam）', [a.pf.windows && 'Windows', a.pf.mac && 'Mac', a.pf.linux && 'Linux'].filter(Boolean).join(' / ') || '—', 'PS・Switch等は公式で確認')}${stat('VTuber動画', vc + '本', '直近のデータ内')}</div>
+    <div class="flex flex-wrap gap-1 mb-3">${(a.genres || []).map(gn => `<span class="text-xs bg-ink/5 rounded px-2 py-0.5">${esc(gn)}</span>`).join(' ')}</div>
+    ${a.dev ? `<div class="text-xs text-muted mb-2">開発: ${esc(a.dev)}</div>` : ''}
+    <p class="text-sm leading-relaxed bg-void border border-line rounded-lg p-3 mb-4">${esc(a.desc)}</p>
+    <h3 class="font-black mb-2">🔗 Steamストア</h3>${linkBox('https://store.steampowered.com/app/' + a.id + '/', 'Steamで開く')}
+    <h3 class="font-black mt-4 mb-2">▶ VTuberの実況を探す</h3>${linkBox(ytSearchUrl(a.name + ' VTuber'), 'YouTubeで検索')}`);
+}
+let CLASSICS = [];
+function renderClassic(C) {
+  const cl = S.data.classic || {}, q = S.q.toLowerCase();
+  const list = CLASSICS.filter(c => (C.cgenre === 'all' || c.g === C.cgenre) && (!q || (c.name + c.series).toLowerCase().includes(q)))
+    .map(c => ({ ...c, m: cl[c.id] })).sort((a, b) => (b.m ? b.m.views : -1) - (a.m ? a.m.views : -1));
+  const max = Math.max(1, ...list.map(c => c.m ? c.m.views : 0));
+  const measured = CLASSICS.filter(c => cl[c.id]).length;
+  return `<div class="flex flex-col gap-3 mb-3">${chips(CLASSIC_G, C.cgenre, 'data-cgenre')}
+    <p class="text-xs text-muted">歴代の名作ゲームを「YouTubeでよく見られている順」にランキング。指標は「ゲーム名＋実況」で検索した再生数上位50本の合計です。毎日15作品ずつ計測していて、現在 ${measured} / ${CLASSICS.length} 作品が計測済み。</p></div>
+    ${list.length ? `<ol class="flex flex-col gap-2">${list.map((c, i) => { const t = c.m && c.m.top && c.m.top[0]; return `
+      <li class="clickable bg-panel border border-line rounded-xl p-2 sm:p-3 flex gap-3 items-center" data-classic="${esc(c.id)}">
+        <span class="w-6 text-center font-mono font-bold ${c.m && i < 3 ? 'text-neon' : 'text-muted'}">${c.m ? i + 1 : '—'}</span>
+        ${t ? `<img src="https://i.ytimg.com/vi/${esc(t.id)}/mqdefault.jpg" alt="" loading="lazy" class="w-24 sm:w-32 aspect-video rounded-lg object-cover bg-line shrink-0">` : `<div class="w-24 sm:w-32 aspect-video rounded-lg bg-ink/5 grid place-items-center text-2xl shrink-0">🎮</div>`}
+        <div class="flex-1 min-w-0">
+          <div class="font-bold truncate">${esc(c.name)}</div>
+          <div class="text-xs text-muted mt-0.5">${c.year}年・${esc(c.hw)}・${CG_LABEL[c.g]}</div>
+          ${c.m ? `<div class="mt-1 h-1.5 bg-ink/5 rounded-full overflow-hidden"><div class="h-full bg-neon/70 rounded-full" style="width:${c.m.views / max * 100}%"></div></div>` : '<div class="text-[11px] text-amber mt-1">計測待ち（毎日少しずつ計測中）</div>'}
+        </div>
+        <div class="text-right shrink-0">${c.m ? `<div class="font-mono font-bold">${fmt(c.m.views)}</div><div class="text-[10px] text-muted">回（上位50本）</div>` : ''}</div>
+      </li>`; }).join('')}</ol>` : emptyBox('該当する作品がありません')}`;
+}
+function openClassic(id) {
+  const c = CLASSICS.find(x => x.id === id); if (!c) return;
+  const m = (S.data.classic || {})[id];
+  openModal('歴代名作', `
+    <div class="text-xs text-neon font-bold mb-1">${CG_LABEL[c.g]}${c.series ? '・' + esc(c.series) + 'シリーズ' : ''}</div>
+    <h2 class="font-black text-xl mb-3">${esc(c.name)}</h2>
+    <div class="grid grid-cols-3 gap-2 mb-3">${stat('発売', c.year + '年')}${stat('ハード', esc(c.hw))}${stat('YouTube再生', m ? fmt(m.views) : '計測待ち', '実況 上位50本の合計')}</div>
+    <p class="text-sm leading-relaxed bg-void border border-line rounded-lg p-3 mb-4">${esc(c.note)}</p>
+    ${m && m.top && m.top.length ? `<h3 class="font-black mb-2">🎬 よく見られている実況動画</h3><ol class="flex flex-col gap-2 mb-4">${m.top.map((v, i) => `
+      <li class="bg-void border border-line rounded-lg p-2 flex gap-3 items-center">
+        <span class="w-5 text-center font-mono text-xs text-muted">${i + 1}</span>
+        <img src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg" alt="" loading="lazy" class="w-24 aspect-video rounded object-cover bg-line shrink-0">
+        <div class="flex-1 min-w-0"><div class="text-xs font-bold line-clamp-2">${esc(v.title)}</div><div class="text-[11px] text-muted">${esc(v.ch)}・${fmt(v.views)}回</div>
+          <div class="mt-1">${miniLink('https://www.youtube.com/watch?v=' + v.id, '動画')}</div></div></li>`).join('')}</ol>` : ''}
+    <h3 class="font-black mb-2">▶ 実況を探す</h3>${linkBox(ytSearchUrl(c.q), 'YouTubeで検索')}`);
+}
 function renderContent() {
   const el = $('#view-content'), C = S.ct;
   let body = '';
@@ -528,10 +736,14 @@ function renderContent() {
     body = `<div class="flex flex-col gap-3 mb-3">${chips(GENRES, C.genre, 'data-ctgenre')}${seg(FORMATS, C.format, 'data-ctformat')}
       <p class="text-xs text-muted">直近${S.period}日・1万回以上再生された動画を「登録者に対する伸び率」で並べたバズランキング。タップで伸びた理由を表示。</p></div>
       ${list.length ? `<ol class="flex flex-col gap-2">${list.map((v, i) => videoRow(v, i, { reason: true })).join('')}</ol>` : emptyBox('該当する動画がありません')}`;
+  } else if (C.tab === 'games') {
+    body = renderGames(C);
+  } else if (C.tab === 'classic') {
+    body = renderClassic(C);
   } else {
     body = renderPast();
   }
-  el.innerHTML = `<div class="mb-4">${seg(CT_TABS, C.tab, 'data-cttab')}</div>${body}`;
+  el.innerHTML = `<div class="mb-4 overflow-x-auto no-scrollbar -mx-4 px-4">${seg(CT_TABS, C.tab, 'data-cttab').replace('w-full sm:w-fit', 'w-max')}</div>${body}`;
 }
 
 /* 過去の流行（キュレーション） */
@@ -601,8 +813,7 @@ function archCard(a) {
     <h3 class="font-black text-base mb-1">${esc(a.name)}</h3>
     <div class="text-xs text-muted mb-2">発祥: ${esc(a.origin)}</div>
     <p class="text-sm text-ink/85 leading-relaxed flex-1"><span class="text-neon text-xs font-bold mr-1">流行った理由</span>${esc(a.why)}</p>
-    <div class="flex items-center justify-between mt-3 pt-3 border-t border-line">${miniLink(ytSearchUrl(a.q), '関連動画')}
-      <button class="text-lg ${on ? 'text-pink' : 'text-muted hover:text-ink'}" data-bm-arch="${a.id}" aria-label="ブックマーク">${on ? '★' : '☆'}</button></div>
+    <div class="mt-3 pt-3 border-t border-line">${miniLink(ytSearchUrl(a.q), '関連動画')}</div>
   </article>`;
 }
 function renderPast() {
@@ -682,8 +893,7 @@ function renderKnow() {
   el.innerHTML = `${chips([{ id:'all', label:'すべて' }, ...Object.entries(KCAT).map(([id, label]) => ({ id, label }))], S.kcat, 'data-kcat')}
   <div class="grid md:grid-cols-2 gap-3 mt-4">
     ${l.map(k => `<article class="clickable bg-panel border border-line rounded-xl p-4" data-kopen="${k.id}">
-        <div class="flex items-center justify-between mb-2"><span class="text-[11px] text-neon font-bold">${KCAT[k.cat]}</span>
-          <button class="text-lg ${BM.know[k.id] ? 'text-pink' : 'text-muted hover:text-ink'}" data-bm-know="${k.id}" aria-label="ブックマーク">${BM.know[k.id] ? '★' : '☆'}</button></div>
+        <div class="mb-2"><span class="text-[11px] text-neon font-bold">${KCAT[k.cat]}</span></div>
         <h3 class="font-black mb-2">${esc(k.title)}</h3>
         <ul class="text-sm text-ink/80 space-y-1">${k.sum.map(s => `<li class="flex gap-2"><span class="text-neon">›</span><span>${esc(s)}</span></li>`).join('')}</ul>
         <div class="text-xs mt-3 ${kn[k.id] ? 'text-lime font-bold' : 'text-muted'}">${kn[k.id] ? '🎬 元動画の要約あり' : '参考: ' + k.src.map(s => esc(s[0])).join(' / ')}</div>
@@ -695,8 +905,7 @@ function renderArticle(el, k) {
   const vurl = ks ? 'https://www.youtube.com/watch?v=' + ks.id : '';
   el.innerHTML = `
   <button data-kback class="text-sm text-muted hover:text-neon mb-3">← 記事一覧に戻る</button>
-  <div class="flex items-center gap-3 mb-1"><span class="text-xs text-neon font-bold">${KCAT[k.cat]}</span>
-    <button class="text-sm ${BM.know[k.id] ? 'text-pink' : 'text-muted hover:text-ink'}" data-bm-know="${k.id}">${BM.know[k.id] ? '★ 保存済み' : '☆ 保存'}</button></div>
+  <div class="mb-1"><span class="text-xs text-neon font-bold">${KCAT[k.cat]}</span></div>
   <h1 class="text-xl sm:text-2xl font-black mb-4">${esc(k.title)}</h1>
   <div class="bg-neon/5 border border-neon/30 rounded-xl p-4 mb-5 glow">
     <div class="text-xs font-mono font-bold text-neon mb-2">3行要約</div>
@@ -768,7 +977,7 @@ function videoModalHTML(v) {
     <h3 class="font-black mb-2">🔗 リンク</h3>
     ${linkBox(v.url)}
     <div class="mt-2">${miniLink('https://www.youtube.com/channel/' + v.chId, 'チャンネル')}</div>
-    <button class="w-full mt-4 border ${on ? 'border-pink text-pink' : 'border-line'} rounded-lg py-2 font-bold text-sm" data-bm-v="${esc(v.id)}">${on ? '★ 保存済み（タップで解除）' : '☆ ブックマークに保存'}</button>`;
+`;
 }
 function openVideo(id) {
   const v = V(id) || (BM.v[id] && enrich({ ...BM.v[id] })); if (!v) return;
@@ -797,8 +1006,8 @@ function openToken(k, g) {
 function render() {
   $$('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === S.tab));
   $$('.view').forEach(v => v.classList.toggle('hidden', v.id !== 'view-' + S.tab));
-  ({ rising: () => renderRanking($('#view-rising'), true), trend: () => renderRanking($('#view-trend'), false),
-     words: renderWords, content: renderContent, know: renderKnow, bm: renderBM })[S.tab]();
+  ({ rising: () => renderRanking($('#view-rising'), true), trend: () => renderRanking($('#view-trend'), false), clip: renderClip,
+     words: renderWords, content: renderContent, know: renderKnow })[S.tab]();
 }
 function setMode() {
   const live = S.mode === 'live';
@@ -821,7 +1030,7 @@ $$('.tab').forEach(t => t.onclick = () => { S.tab = t.dataset.tab; S.kopen = nul
 let qT; $('#q').addEventListener('input', e => { clearTimeout(qT); qT = setTimeout(() => { S.q = e.target.value.trim(); render(); }, 150); });
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-close],#mBack,[data-copy],[data-bm-v],[data-bm-arch],[data-bm-know],[data-genre],[data-format],[data-cap],[data-kwsrc],[data-kwgenre],[data-cttab],[data-ctgenre],[data-ctformat],[data-arch],[data-kcat],[data-kback],[data-kopen],[data-tok],[data-vid]');
+  const t = e.target.closest('[data-close],#mBack,[data-copy],[data-bm-v],[data-bm-arch],[data-bm-know],[data-genre],[data-format],[data-cap],[data-kwsrc],[data-kwgenre],[data-cttab],[data-ctgenre],[data-ctformat],[data-arch],[data-kcat],[data-kback],[data-kopen],[data-tok],[data-clipview],[data-cliprange],[data-clipfmt],[data-clipch],[data-gmode],[data-ggenre],[data-cgenre],[data-game],[data-classic],[data-vid]');
   if (!t) return;
   const d = t.dataset;
   if (d.close !== undefined) return closeModal();
@@ -850,6 +1059,15 @@ document.addEventListener('click', e => {
   if (d.kcat) { S.kcat = d.kcat; return render(); }
   if (d.kback !== undefined) { S.kopen = null; return render(); }
   if (d.kopen) { S.kopen = d.kopen; S.tab = 'know'; render(); return window.scrollTo(0, 0); }
+  if (d.clipview) { S.clip.view = d.clipview; return render(); }
+  if (d.cliprange) { S.clip.range = d.cliprange; return render(); }
+  if (d.clipfmt) { S.clip.fmt = d.clipfmt; return render(); }
+  if (d.clipch) return openClipCh(d.clipch);
+  if (d.gmode) { S.ct.gmode = d.gmode; return render(); }
+  if (d.ggenre) { S.ct.ggenre = d.ggenre; return render(); }
+  if (d.cgenre) { S.ct.cgenre = d.cgenre; return render(); }
+  if (d.game) return openGame(d.game);
+  if (d.classic) return openClassic(d.classic);
   if (d.tok) return openToken(d.tok, d.tokg);
   if (d.vid) return openVideo(d.vid);
 });
@@ -858,6 +1076,8 @@ document.addEventListener('change', e => {
   if (k === 'sort') S.sort = e.target.value;
   if (k === 'period') S.period = +e.target.value;
   if (k === 'archsort') S.arch.sort = e.target.value;
+  if (k === 'clipsort') S.clip.sort = e.target.value;
+  if (k === 'clipperiod') S.clip.period = +e.target.value;
   render();
 });
 document.addEventListener('focusin', e => { if (e.target.matches('[data-selectall]')) e.target.select(); });
