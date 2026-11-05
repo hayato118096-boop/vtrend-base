@@ -60,8 +60,9 @@ async function screenVideos(ids, videosMap) {
   if (!MODEL) { MODEL = await pickModel(); diag.model = MODEL; }
   const todo = ids.filter(id => aiv[id] === undefined && videosMap[id]).slice(0, 480); // 1日480本まで（無料枠の回数を、AI分析・記事づくりの分も残すため。判定済みは覚えておくので毎日少しずつ増える）
   let done = 0;
-  for (let i = 0; i < todo.length; i += 80) {
-    const batch = todo.slice(i, i + 80);
+  // 160本ずつまとめて判定（呼び出し回数を減らすため）
+  for (let i = 0; i < todo.length; i += 160) {
+    const batch = todo.slice(i, i + 160);
     const lines = batch.map(id => `${id} | ${videosMap[id].title} | ${videosMap[id].ch}`).join('\n');
     try {
       const { data } = await gemini([{ text:
@@ -678,7 +679,7 @@ async function pickModel() {
   // 本番の前に、候補のモデルへ短いテストを送って「今つながるモデル」を確かめる（つながったものを先頭に。3つ見つかったら終了）
   const probe = {}, ok = [];
   for (const m of MODELS) {
-    if (ok.length >= 3) break;
+    if (ok.length >= 1) break; // 1つつながったらテストは終わり（呼び出し回数を減らすため）
     const s = await probeModel(m);
     probe[m] = s;
     if (s === 'ok') ok.push(m);
@@ -765,50 +766,59 @@ if (GEM) {
 
   // CH_ONLY のときは C-1・C-2・C-4 はしない（ナレッジ記事だけ追加で作る）
   if (!CH_ONLY) {
-  // C-1. バズ動画の理由（ジャンルごと上位10本、過去に書いたものは再利用）
+  // C-1. バズ動画の理由（ジャンルごと上位10本）。全ジャンル分を1回の呼び出しでまとめて作る。過去に書いたものは再利用
   const oldBuzz = prev.aiBuzz || {};
+  const buzzTodo = new Map();
   for (const g of GENRES) {
     const ids = new Set();
     for (const f of FORMATS) for (const p of ['7', 'new']) (pools[`${g.id}|${f.id}|${p}`] || []).forEach(id => ids.add(id));
     const top = [...ids].map(id => videos[id]).filter(v => v && v.subs && v.views >= 10000 && !isClip(v)).sort((a, b) => ratioOf(b) - ratioOf(a)).slice(0, 10);
-    top.forEach(v => { if (oldBuzz[v.id]) aiBuzz[v.id] = oldBuzz[v.id]; });
-    const todo = top.filter(v => !oldBuzz[v.id]);
-    if (!todo.length) continue;
-    const lines = todo.map(v => `${v.id} | ${v.title} | ${v.ch} | 登録者${v.subs} | 再生${v.views} | 公開から${Math.max(1, Math.round((now - Date.parse(v.published)) / 864e5))}日 | 高評価${v.likes} | コメント${v.comments} | ${v.stream ? '配信アーカイブ' : fmtOf(v) === 'short' ? 'ショート' : '動画'}`).join('\n');
+    top.forEach(v => { if (oldBuzz[v.id]) aiBuzz[v.id] = oldBuzz[v.id]; else buzzTodo.set(v.id, v); });
+  }
+  if (buzzTodo.size) {
+    const lines = [...buzzTodo.values()].map(v => `${v.id} | ${v.title} | ${v.ch} | 登録者${v.subs} | 再生${v.views} | 公開から${Math.max(1, Math.round((now - Date.parse(v.published)) / 864e5))}日 | 高評価${v.likes} | コメント${v.comments} | ${v.stream ? '配信アーカイブ' : fmtOf(v) === 'short' ? 'ショート' : '動画'}`).join('\n');
     try {
       const { data } = await gemini([{ text:
         'あなたはVTuber・YouTubeのアナリストです。次の動画それぞれについて、タイトル・数字から考えられる「伸びた理由と経緯」を日本語で2〜3文で書いてください。' +
-        '事実として分からないことは「〜と考えられる」と推測であることを明記し、誇張しないでください。' +
+        '事実として分からないことは「〜と考えられる」と推測であることを明記し、誇張しないでください。すべての動画について書いてください。' +
         '出力はJSON配列 [{"id":"動画ID","reason":"理由"}] のみ。\n\n' + lines }]);
       for (const x of data || []) if (x && x.id && x.reason) aiBuzz[x.id] = x.reason;
-      console.log(`OK   gemini buzz ${g.id}: ${todo.length}本`);
-    } catch (e) { logErr(`gemini buzz ${g.id}`, e); }
+      console.log(`OK   gemini buzz: ${buzzTodo.size}本を1回で作成`);
+    } catch (e) { logErr('gemini buzz', e); }
     await sleep(7000);
   }
 
   // C-2. 話題ワードの流行理由（ジャンルごと上位20語）→ アーカイブにも保存
+  //      全ジャンル分を1回の呼び出しでまとめて作る。前回説明したワードは説明を再利用して、新しいワードだけ聞く
+  const oldTok = prev.aiTok || {};
+  const tokTodo = [];
   for (const g of GENRES) {
-    const list = (tokens[g.id] || []).slice(0, 20);
-    if (!list.length) continue;
-    const lines = list.map(t => `「${t.w}」(${t.n}本): ` + t.top.slice(0, 4).map(id => videos[id] && videos[id].title).filter(Boolean).join(' / ')).join('\n');
+    aiTok[g.id] = {};
+    for (const t of (tokens[g.id] || []).slice(0, 20)) {
+      if (oldTok[g.id] && oldTok[g.id][t.w]) aiTok[g.id][t.w] = oldTok[g.id][t.w];
+      else tokTodo.push({ g: g.id, t });
+    }
+  }
+  if (tokTodo.length) {
+    const GJ = { all: 'すべて', game: 'ゲーム', song: '歌ってみた', talk: '雑談', plan: '企画', horror: 'ホラー' };
+    const lines = tokTodo.map(({ g, t }) => `${g} | 「${t.w}」(${t.n}本, ジャンル:${GJ[g]}): ` + t.top.slice(0, 4).map(id => videos[id] && videos[id].title).filter(Boolean).join(' / ')).join('\n');
     try {
       const { data } = await gemini([{ text:
-        'あなたはVTuber・YouTubeのアナリストです。次はここ1週間のVTuber動画タイトルによく出てくるワードと、その代表的な動画タイトルです。' +
-        '各ワードについて「何なのか」「なぜ今流行っているのか（経緯）」「VTuberがやるならどんな企画がウケそうか」を日本語で3〜4文で説明してください。分からない点は推測と明記してください。' +
-        '出力はJSON配列 [{"w":"ワード","reason":"説明"}] のみ。ワードは入力と完全に同じ表記にしてください。\n\n' + lines }]);
-      aiTok[g.id] = {};
-      for (const x of data || []) if (x && x.w && x.reason) {
-        aiTok[g.id][x.w] = x.reason;
-        const t = list.find(t => t.w === x.w);
-        if (t && g.id !== 'all' && archive && archive[`${g.id}|${t.k}`]) archive[`${g.id}|${t.k}`].reason = x.reason;
+        'あなたはVTuber・YouTubeのアナリストです。次はここ1週間のVTuber動画タイトルによく出てくるワード（行頭はジャンルID）と、その代表的な動画タイトルです。' +
+        '各ワードについて「何なのか」「なぜ今流行っているのか（経緯）」「VTuberがやるならどんな企画がウケそうか」を日本語で3〜4文で説明してください。分からない点は推測と明記してください。すべてのワードについて書いてください。' +
+        '出力はJSON配列 [{"g":"ジャンルID","w":"ワード","reason":"説明"}] のみ。ジャンルIDとワードは入力と完全に同じ表記にしてください。\n\n' + lines }]);
+      let n = 0;
+      for (const x of data || []) if (x && x.g && x.w && x.reason && aiTok[x.g]) {
+        aiTok[x.g][x.w] = x.reason; n++;
+        const t = (tokens[x.g] || []).find(t => t.w === x.w);
+        if (t && x.g !== 'all' && archive && archive[`${x.g}|${t.k}`]) archive[`${x.g}|${t.k}`].reason = x.reason;
       }
-      console.log(`OK   gemini tokens ${g.id}: ${Object.keys(aiTok[g.id]).length}語`);
-    } catch (e) {
-      logErr(`gemini tokens ${g.id}`, e);
-      if (prev.aiTok && prev.aiTok[g.id]) aiTok[g.id] = prev.aiTok[g.id];
-    }
+      console.log(`OK   gemini tokens: ${n}語を1回で作成`);
+    } catch (e) { logErr('gemini tokens', e); }
     await sleep(7000);
   }
+  // 作れなかったジャンルは前回の説明を残す
+  for (const g of GENRES) if (!Object.keys(aiTok[g.id]).length && oldTok[g.id]) aiTok[g.id] = oldTok[g.id];
   }
 
   // C-3. ノウハウ記事：毎日2テーマ。YouTube動画＋Web記事を読んで、新しい記事を作るか、似た記事を修正する
