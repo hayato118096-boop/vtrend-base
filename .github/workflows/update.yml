@@ -11,6 +11,10 @@ on:
         description: 'AIの理由・要約だけ作り直す（YouTubeの無料枠をほぼ使わない）'
         type: boolean
         default: false
+      ch_only:
+        description: 'チャンネルの情報（登録者・アイコン・注目動画）を更新して、ナレッジ記事を3本追加する（その日の残りの無料枠を 約2,100ユニット使う）'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -38,6 +42,7 @@ jobs:
           # 任意：設定すると AI（Gemini 無料枠）で理由・要約を作る
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           AI_ONLY: ${{ inputs.ai_only }}
+          CH_ONLY: ${{ inputs.ch_only }}
 
       - name: Commit data.json
         run: |
