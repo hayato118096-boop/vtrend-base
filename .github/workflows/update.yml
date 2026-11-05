@@ -2,8 +2,9 @@ name: Update trend data
 
 on:
   schedule:
-    # 毎日 0:17（日本時間）＝ 15:17（UTC）。GitHub側の混雑で数十分遅れることがあります
-    - cron: '17 15 * * *'
+    # 毎日 17:17（日本時間）＝ 8:17（UTC）。YouTube APIの無料枠が戻る時間（太平洋時間0時＝日本時間 冬17時・夏16時）の後に実行
+    # GitHub側の混雑で数十分遅れることがあります
+    - cron: '17 8 * * *'
   workflow_dispatch: # Actions画面の「Run workflow」ボタンから手動実行もできる
     inputs:
       ai_only:
