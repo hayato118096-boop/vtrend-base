@@ -42,6 +42,10 @@ const dayNo = Math.floor((now + 9 * 3600e3) / 864e5);
 const after = d => new Date(now - d * 864e5).toISOString();
 const diag = { errors: [], model: null, models: [] };
 let MODEL = null;
+// 使うモデルの候補（上から順に使い、混雑・無料枠切れのときは次のモデルに切り替える。無料枠はモデルごとに別）
+// ※ 最初のAIの動画チェック（A-3.5）から使うので、ファイルの先頭で用意しておく
+let MODELS = [];
+const deadModels = new Set();
 const parseJSON = text => {
   text = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
   try { return JSON.parse(text); } catch {}
@@ -652,9 +656,6 @@ if (!AI_ONLY) {
 // =====================================================================
 // C. Gemini（任意）
 // =====================================================================
-// 使うモデルの候補（上から順に使い、混雑・無料枠切れのときは次のモデルに切り替える。無料枠はモデルごとに別）
-let MODELS = [];
-const deadModels = new Set();
 async function pickModel() {
   try {
     const j = await (await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${GEM}&pageSize=200`)).json();
