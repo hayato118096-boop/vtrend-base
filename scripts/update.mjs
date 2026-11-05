@@ -57,7 +57,7 @@ let aiv = {};
 async function screenVideos(ids, videosMap) {
   if (!GEM) return;
   if (!MODEL) { MODEL = await pickModel(); diag.model = MODEL; }
-  const todo = ids.filter(id => aiv[id] === undefined && videosMap[id]).slice(0, 800); // 1日800本まで（無料枠の回数制限のため）
+  const todo = ids.filter(id => aiv[id] === undefined && videosMap[id]).slice(0, 480); // 1日480本まで（無料枠の回数を、AI分析・記事づくりの分も残すため。判定済みは覚えておくので毎日少しずつ増える）
   let done = 0;
   for (let i = 0; i < todo.length; i += 80) {
     const batch = todo.slice(i, i + 80);
@@ -682,8 +682,8 @@ async function gemini(parts, { search = false } = {}) {
   const body = { contents: [{ parts }], generationConfig: { temperature: 0.4 } };
   if (search) body.tools = [{ google_search: {} }];
   else body.generationConfig.responseMimeType = 'application/json';
-  const waited = new Set();
-  for (let attempt = 0; attempt < 12; attempt++) {
+  const waited = new Map();
+  for (let attempt = 0; attempt < 30; attempt++) {
     const model = MODEL;
     let j;
     try {
@@ -699,19 +699,23 @@ async function gemini(parts, { search = false } = {}) {
       return { data: parseJSON(text), chunks };
     }
     const msg = String(j.error.message || ''), code = j.error.code;
-    const busy = code === 503 || /high demand|overloaded|unavailable|try again later/i.test(msg);
-    const quota = code === 429 || /quota|exhausted|rate.?limit/i.test(msg);
-    if (!busy && !quota) throw new Error(msg);
-    // 1分あたりの上限なら少し待って同じモデルでもう一度。混雑も1回だけ待つ
-    const m = /retry in ([\d.]+)s/i.exec(msg);
-    if (!waited.has(model) && ((m && +m[1] <= 65) || busy)) { waited.add(model); await sleep(((m ? +m[1] : 20) + 2) * 1000); continue; }
+    // 使えないモデル（新規ユーザーは使えない・提供終了・見つからない など）
+    const gone = code === 404 || code === 403 || /no longer available|not found|not supported|deprecated|permission/i.test(msg);
+    const busy = !gone && (code === 503 || code === 500 || /high demand|overloaded|unavailable|try again later|internal/i.test(msg));
+    const quota = !gone && (code === 429 || /quota|exhausted|rate.?limit/i.test(msg));
+    if (!busy && !quota && !gone) throw new Error(msg);
+    // 混雑：最大3回まで待ってやり直す（20秒→40秒→60秒）。1分あたりの上限：指定の秒数だけ待って1回やり直す
+    const n = waited.get(model) || 0, m = /retry in ([\d.]+)s/i.exec(msg);
+    if (busy && n < 3) { waited.set(model, n + 1); await sleep((n + 1) * 20000); continue; }
+    if (quota && m && +m[1] <= 65 && n < 1) { waited.set(model, n + 1); await sleep((+m[1] + 2) * 1000); continue; }
     // それでもだめなら、このモデルは今回は使わず次のモデルへ
     deadModels.add(model);
+    const why = gone ? '使えないモデル' : busy ? '混雑' : '無料枠';
     const next = MODELS.find(x => !deadModels.has(x));
-    if (!next) throw new Error('使えるAIモデルがありません（すべて混雑または無料枠切れ）: ' + msg);
-    console.log(`AIモデル切り替え: ${model} → ${next}（${busy ? '混雑' : '無料枠'}）`);
+    if (!next) throw new Error('使えるAIモデルがありません（すべて混雑・無料枠切れ・使えないモデル）: ' + msg);
+    console.log(`AIモデル切り替え: ${model} → ${next}（${why}）`);
     if (diag.switches == null) diag.switches = [];
-    if (diag.switches.length < 20) diag.switches.push(`${model} → ${next}`);
+    if (diag.switches.length < 20) diag.switches.push(`${model} → ${next}（${why}: ${msg.slice(0, 80)}）`);
     MODEL = next; diag.model = next;
   }
   throw new Error('AIの再試行の上限に達しました');
