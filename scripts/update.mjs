@@ -46,6 +46,7 @@ let MODEL = null;
 // ※ 最初のAIの動画チェック（A-3.5）から使うので、ファイルの先頭で用意しておく
 let MODELS = [];
 const deadModels = new Set();
+const AI_DEADLINE = 33 * 60e3; // 開始から33分を過ぎたらAIの処理はしない
 const parseJSON = text => {
   text = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
   try { return JSON.parse(text); } catch {}
@@ -69,7 +70,7 @@ async function screenVideos(ids, videosMap) {
         'k=0（外す）：他人が作った反応集・まとめ・ニュース・ゴシップ・考察・解説（VTuberについて語るもの）、切り抜きチャンネル、ファンアート・ファンアニメ、広告・講座・宣伝、VTuberと関係ない一般の動画、日本語以外の動画。\n' +
         '迷う場合は k=1 にしてください。出力はJSON配列 [{"id":"動画ID","k":1}] のみ。\n\n' + lines }]);
       for (const x of data || []) if (x && x.id && (x.k === 0 || x.k === 1)) { aiv[x.id] = x.k; done++; }
-    } catch (e) { logErr('gemini screen', e); if (/使えるAIモデル|quota|exhausted|再試行の上限/i.test(String(e.message))) break; }
+    } catch (e) { logErr('gemini screen', e); if (/使えるAIモデル|quota|exhausted|再試行の上限|時間切れ/i.test(String(e.message))) break; }
     await sleep(4500);
   }
   console.log(`OK   AI精査: ${done}本を判定（外す ${Object.values(aiv).filter(x => x === 0).length}本）`);
@@ -665,25 +666,56 @@ async function pickModel() {
     const ver = n => { const m = /gemini-(\d+(?:\.\d+)?)/.exec(n); return m ? +m[1] : 0; };
     const NG = /image|tts|live|audio|thinking|embedding|omni|transcribe|robotics|computer|customtools|nano|banana/;
     const pick = (re, notRe) => names.filter(n => /^gemini-/.test(n) && re.test(n) && !NG.test(n) && !(notRe && notRe.test(n))).sort((a, b) => ver(b) - ver(a) || a.length - b.length);
+    // 使う順番（運営の指定）：3.8 Flash → 3.6 Flash → 3.5 Flash Lite → 3.1 Flash Lite
     const list = [
       process.env.GEMINI_MODEL,
-      'gemini-flash-latest',                     // 安定版の Flash（いちばん無料枠に余裕がある想定）
-      ...pick(/flash/, /lite|preview|exp/),       // 正式版の Flash（新しい順）
-      'gemini-flash-lite-latest',
-      ...pick(/flash-lite/, /preview|exp/),       // 正式版の Flash-Lite
-      ...pick(/flash/, null).filter(n => /preview|exp/.test(n)), // プレビュー版
+      'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite',
     ].filter((n, i, a) => n && names.includes(n) && a.indexOf(n) === i);
+    // 4つとも一覧に無いときだけ、ほかの Flash 系を予備に使う
+    if (!list.length) list.push(...pick(/flash/, /preview|exp/));
     MODELS = list.length ? list : ['gemini-flash-latest'];
   } catch (e) { logErr('gemini models', e); MODELS = [process.env.GEMINI_MODEL || 'gemini-flash-latest']; }
+  // 本番の前に、候補のモデルへ短いテストを送って「今つながるモデル」を確かめる（つながったものを先頭に。3つ見つかったら終了）
+  const probe = {}, ok = [];
+  for (const m of MODELS) {
+    if (ok.length >= 3) break;
+    const s = await probeModel(m);
+    probe[m] = s;
+    if (s === 'ok') ok.push(m);
+    else if (/^(使えない|無料枠)/.test(s)) deadModels.add(m);
+    await sleep(1500);
+  }
+  diag.probe = probe;
+  MODELS = [...ok, ...MODELS.filter(m => !ok.includes(m) && !deadModels.has(m))];
+  console.log('AIモデルのテスト: ' + Object.entries(probe).map(([m, s]) => `${m}=${s.slice(0, 20)}`).join(' / '));
   diag.modelList = MODELS.slice(0, 12);
-  return MODELS[0];
+  return MODELS[0] || 'gemini-flash-latest';
+}
+// モデルに短いテストを送って結果を返す：ok / 混雑 / 無料枠 / 使えない / その他
+async function probeModel(model) {
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEM}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: 'OK とだけ答えてください' }] }] }),
+    });
+    const j = await r.json();
+    if (!j.error) return 'ok';
+    const msg = String(j.error.message || ''), code = j.error.code;
+    if (code === 404 || code === 403 || /no longer available|not found|not supported|deprecated|permission/i.test(msg)) return '使えない: ' + msg.slice(0, 100);
+    if (code === 429 || /quota|exhausted|rate.?limit/i.test(msg)) return '無料枠: ' + msg.slice(0, 160);
+    if (code === 503 || code === 500 || /high demand|overloaded|unavailable/i.test(msg)) return '混雑: ' + msg.slice(0, 100);
+    return 'その他: ' + msg.slice(0, 100);
+  } catch (e) { return 'その他: ' + String(e && e.message || e).slice(0, 100); }
 }
 async function gemini(parts, { search = false } = {}) {
   const body = { contents: [{ parts }], generationConfig: { temperature: 0.4 } };
   if (search) body.tools = [{ google_search: {} }];
   else body.generationConfig.responseMimeType = 'application/json';
+  // GitHub の実行時間の上限（45分）までに保存できるよう、開始から33分を過ぎたらAIは使わない
+  if (Date.now() - now > AI_DEADLINE) throw new Error('時間切れ：AIの処理を打ち切りました（保存を優先）');
   const waited = new Map();
   for (let attempt = 0; attempt < 30; attempt++) {
+    if (Date.now() - now > AI_DEADLINE) throw new Error('時間切れ：AIの処理を打ち切りました（保存を優先）');
     const model = MODEL;
     let j;
     try {
