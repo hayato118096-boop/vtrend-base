@@ -7,15 +7,6 @@ on:
     - cron: '17 8 * * *'
   workflow_dispatch: # Actions画面の「Run workflow」ボタンから手動実行もできる
     inputs:
-      ai_only:name: Update trend data
-
-on:
-  schedule:
-    # 毎日 17:17（日本時間）＝ 8:17（UTC）。YouTube APIの無料枠が戻る時間（太平洋時間0時＝日本時間 冬17時・夏16時）の後に実行
-    # GitHub側の混雑で数十分遅れることがあります
-    - cron: '17 8 * * *'
-  workflow_dispatch: # Actions画面の「Run workflow」ボタンから手動実行もできる
-    inputs:
       ai_only:
         description: 'AIの理由・要約だけ作り直す（YouTubeの無料枠をほぼ使わない）'
         type: boolean
@@ -68,56 +59,6 @@ jobs:
           for i in 1 2 3; do
             git pull --rebase -X theirs origin main && git push && exit 0
             git rebase --abort 2>/dev/null || true
-            sleep 5
-          done
-          exit 1
-
-        description: 'AIの理由・要約だけ作り直す（YouTubeの無料枠をほぼ使わない）'
-        type: boolean
-        default: false
-      ch_only:
-        description: 'チャンネルの情報（登録者・アイコン・注目動画）を更新して、ナレッジ記事を3本追加する（その日の残りの無料枠を 約2,100ユニット使う）'
-        type: boolean
-        default: false
-
-permissions:
-  contents: write
-
-# 更新処理が同時に2つ動かないようにする（順番に実行）
-concurrency:
-  group: update-data
-  cancel-in-progress: false
-
-jobs:
-  update:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Fetch YouTube data
-        run: node scripts/update.mjs
-        env:
-          YT_API_KEY: ${{ secrets.YT_API_KEY }}
-          # 任意：設定すると AI（Gemini 無料枠）で理由・要約を作る
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          AI_ONLY: ${{ inputs.ai_only }}
-          CH_ONLY: ${{ inputs.ch_only }}
-
-      - name: Commit data.json
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data.json
-          git diff --cached --quiet && exit 0
-          git commit -m "data: $(date -u +%F)"
-          # 実行中にサイトのファイルが更新されていても保存できるように、最新を取り込んでから保存
-          for i in 1 2 3; do
-            git pull --rebase origin main && git push && exit 0
             sleep 5
           done
           exit 1
