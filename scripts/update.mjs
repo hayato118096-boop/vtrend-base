@@ -47,6 +47,13 @@ let MODEL = null;
 let MODELS = [];
 const deadModels = new Set();
 const AI_DEADLINE = 33 * 60e3; // 開始から33分を過ぎたらAIの処理はしない
+// モデルの使い分け（運営の指定・無料で呼べる回数）
+//   高性能（重要で判断がややこしい仕事）：3.8 Flash 5回 → 3.6 Flash 5回
+//   軽量（量が多い・単純な仕事）        ：3.5 Flash Lite 15回 → 3.1 Flash Lite 15回
+//   それぞれ使い切ったら、同じグループの次のモデル → 最後にもう一方のグループへ
+const LIMITS = { 'gemini-3.8-flash': 5, 'gemini-3.6-flash': 5, 'gemini-3.5-flash-lite': 15, 'gemini-3.1-flash-lite': 15 };
+const TIER = { high: ['gemini-3.8-flash', 'gemini-3.6-flash'], lite: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'] };
+const usedCalls = {}, lastCall = {};
 const parseJSON = text => {
   text = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
   try { return JSON.parse(text); } catch {}
@@ -676,39 +683,15 @@ async function pickModel() {
     if (!list.length) list.push(...pick(/flash/, /preview|exp/));
     MODELS = list.length ? list : ['gemini-flash-latest'];
   } catch (e) { logErr('gemini models', e); MODELS = [process.env.GEMINI_MODEL || 'gemini-flash-latest']; }
-  // 本番の前に、候補のモデルへ短いテストを送って「今つながるモデル」を確かめる（つながったものを先頭に。3つ見つかったら終了）
-  const probe = {}, ok = [];
-  for (const m of MODELS) {
-    if (ok.length >= 1) break; // 1つつながったらテストは終わり（呼び出し回数を減らすため）
-    const s = await probeModel(m);
-    probe[m] = s;
-    if (s === 'ok') ok.push(m);
-    else if (/^(使えない|無料枠)/.test(s)) deadModels.add(m);
-    await sleep(1500);
-  }
-  diag.probe = probe;
-  MODELS = [...ok, ...MODELS.filter(m => !ok.includes(m) && !deadModels.has(m))];
-  console.log('AIモデルのテスト: ' + Object.entries(probe).map(([m, s]) => `${m}=${s.slice(0, 20)}`).join(' / '));
   diag.modelList = MODELS.slice(0, 12);
   return MODELS[0] || 'gemini-flash-latest';
 }
-// モデルに短いテストを送って結果を返す：ok / 混雑 / 無料枠 / 使えない / その他
-async function probeModel(model) {
-  try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEM}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: 'OK とだけ答えてください' }] }] }),
-    });
-    const j = await r.json();
-    if (!j.error) return 'ok';
-    const msg = String(j.error.message || ''), code = j.error.code;
-    if (code === 404 || code === 403 || /no longer available|not found|not supported|deprecated|permission/i.test(msg)) return '使えない: ' + msg.slice(0, 100);
-    if (code === 429 || /quota|exhausted|rate.?limit/i.test(msg)) return '無料枠: ' + msg.slice(0, 160);
-    if (code === 503 || code === 500 || /high demand|overloaded|unavailable/i.test(msg)) return '混雑: ' + msg.slice(0, 100);
-    return 'その他: ' + msg.slice(0, 100);
-  } catch (e) { return 'その他: ' + String(e && e.message || e).slice(0, 100); }
+function chooseModel(tier) {
+  const order = tier === 'high' ? [...TIER.high, ...TIER.lite] : [...TIER.lite, ...TIER.high];
+  const ok = m => MODELS.includes(m) && !deadModels.has(m) && (usedCalls[m] || 0) < (LIMITS[m] ?? 999);
+  return order.find(ok) || MODELS.find(ok) || null;
 }
-async function gemini(parts, { search = false } = {}) {
+async function gemini(parts, { search = false, tier = 'lite' } = {}) {
   const body = { contents: [{ parts }], generationConfig: { temperature: 0.4 } };
   if (search) body.tools = [{ google_search: {} }];
   else body.generationConfig.responseMimeType = 'application/json';
@@ -717,7 +700,15 @@ async function gemini(parts, { search = false } = {}) {
   const waited = new Map();
   for (let attempt = 0; attempt < 30; attempt++) {
     if (Date.now() - now > AI_DEADLINE) throw new Error('時間切れ：AIの処理を打ち切りました（保存を優先）');
-    const model = MODEL;
+    const model = chooseModel(tier);
+    if (!model) throw new Error('使えるAIモデルがありません（すべて回数を使い切った・混雑・使えないモデル）');
+    if (model !== MODEL) { console.log(`AIモデル: ${model}（${tier === 'high' ? '高性能' : '軽量'}の仕事）`); MODEL = model; }
+    // 同じモデルを続けて呼ぶときは間をあける（高性能は1分に5回まで、軽量は15回までの想定）
+    const gap = (model.includes('lite') ? 4500 : 13000) - (Date.now() - (lastCall[model] || 0));
+    if (gap > 0) await sleep(gap);
+    lastCall[model] = Date.now();
+    usedCalls[model] = (usedCalls[model] || 0) + 1;
+    diag.usage = { ...usedCalls };
     let j;
     try {
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEM}`, {
@@ -737,6 +728,8 @@ async function gemini(parts, { search = false } = {}) {
     const busy = !gone && (code === 503 || code === 500 || /high demand|overloaded|unavailable|try again later|internal/i.test(msg));
     const quota = !gone && (code === 429 || /quota|exhausted|rate.?limit/i.test(msg));
     if (!busy && !quota && !gone) throw new Error(msg);
+    // 混雑・上限で断られた呼び出しは、回数に数えない
+    if (busy || quota) { usedCalls[model]--; diag.usage = { ...usedCalls }; }
     // 混雑：最大3回まで待ってやり直す（20秒→40秒→60秒）。1分あたりの上限：指定の秒数だけ待って1回やり直す
     const n = waited.get(model) || 0, m = /retry in ([\d.]+)s/i.exec(msg);
     if (busy && n < 3) { waited.set(model, n + 1); await sleep((n + 1) * 20000); continue; }
@@ -744,12 +737,9 @@ async function gemini(parts, { search = false } = {}) {
     // それでもだめなら、このモデルは今回は使わず次のモデルへ
     deadModels.add(model);
     const why = gone ? '使えないモデル' : busy ? '混雑' : '無料枠';
-    const next = MODELS.find(x => !deadModels.has(x));
-    if (!next) throw new Error('使えるAIモデルがありません（すべて混雑・無料枠切れ・使えないモデル）: ' + msg);
-    console.log(`AIモデル切り替え: ${model} → ${next}（${why}）`);
+    console.log(`AIモデル ${model} を外しました（${why}）`);
     if (diag.switches == null) diag.switches = [];
-    if (diag.switches.length < 20) diag.switches.push(`${model} → ${next}（${why}: ${msg.slice(0, 80)}）`);
-    MODEL = next; diag.model = next;
+    if (diag.switches.length < 20) diag.switches.push(`${model}（${why}: ${msg.slice(0, 80)}）`);
   }
   throw new Error('AIの再試行の上限に達しました');
 }
@@ -763,6 +753,9 @@ if (GEM) {
   if (!MODEL) MODEL = await pickModel();
   diag.model = MODEL;
   console.log(`AIモデル: ${MODEL}`);
+
+  // いちばん大事な AI分析（C-4）を最初に作る
+  await runInsight();
 
   // CH_ONLY のときは C-1・C-2・C-4 はしない（ナレッジ記事だけ追加で作る）
   if (!CH_ONLY) {
@@ -781,7 +774,7 @@ if (GEM) {
       const { data } = await gemini([{ text:
         'あなたはVTuber・YouTubeのアナリストです。次の動画それぞれについて、タイトル・数字から考えられる「伸びた理由と経緯」を日本語で2〜3文で書いてください。' +
         '事実として分からないことは「〜と考えられる」と推測であることを明記し、誇張しないでください。すべての動画について書いてください。' +
-        '出力はJSON配列 [{"id":"動画ID","reason":"理由"}] のみ。\n\n' + lines }]);
+        '出力はJSON配列 [{"id":"動画ID","reason":"理由"}] のみ。\n\n' + lines }], { tier: 'high' });
       for (const x of data || []) if (x && x.id && x.reason) aiBuzz[x.id] = x.reason;
       console.log(`OK   gemini buzz: ${buzzTodo.size}本を1回で作成`);
     } catch (e) { logErr('gemini buzz', e); }
@@ -806,7 +799,7 @@ if (GEM) {
       const { data } = await gemini([{ text:
         'あなたはVTuber・YouTubeのアナリストです。次はここ1週間のVTuber動画タイトルによく出てくるワード（行頭はジャンルID）と、その代表的な動画タイトルです。' +
         '各ワードについて「何なのか」「なぜ今流行っているのか（経緯）」「VTuberがやるならどんな企画がウケそうか」を日本語で3〜4文で説明してください。分からない点は推測と明記してください。すべてのワードについて書いてください。' +
-        '出力はJSON配列 [{"g":"ジャンルID","w":"ワード","reason":"説明"}] のみ。ジャンルIDとワードは入力と完全に同じ表記にしてください。\n\n' + lines }]);
+        '出力はJSON配列 [{"g":"ジャンルID","w":"ワード","reason":"説明"}] のみ。ジャンルIDとワードは入力と完全に同じ表記にしてください。\n\n' + lines }], { tier: 'high' });
       let n = 0;
       for (const x of data || []) if (x && x.g && x.w && x.reason && aiTok[x.g]) {
         aiTok[x.g][x.w] = x.reason; n++;
@@ -877,7 +870,7 @@ if (GEM) {
         '記事は日本語で、VTuber・配信者がすぐ使える具体的な内容にしてください。資料にないことを断定しないでください。\n' +
         '出力はJSONのみ: {"action":"new|update","target":"記事ID または 空","title":"記事タイトル","summary":["3行要約1","2","3"],"sections":[{"h":"見出し","p":"本文（3〜5文）"}],"forVtuber":["すぐできること"],"change":"修正内容"}\n' +
         `sections は3〜6個、forVtuber は2〜4個。テーマのカテゴリ: ${CAT_JA[topic.cat]}（${topic.focus}）。修正する場合も、同じカテゴリの記事だけを対象にしてください。\n\n` +
-        `【既存の記事一覧】\n${list}\n\n【新しい資料：動画の要約】\n${JSON.stringify(videoSum || [])}\n\n【新しい資料：Web記事の要約】\n${JSON.stringify(webPts || [])}` }]);
+        `【既存の記事一覧】\n${list}\n\n【新しい資料：動画の要約】\n${JSON.stringify(videoSum || [])}\n\n【新しい資料：Web記事の要約】\n${JSON.stringify(webPts || [])}` }], { tier: 'high' });
       if (!data || !data.title) throw new Error('記事の生成結果が空');
       const target = data.action === 'update' && notes.find(n => n.id === data.target);
       if (target) {
@@ -897,7 +890,8 @@ if (GEM) {
   notes = notes.slice(0, 400);
 
   // C-4. AIトレンド分析：全データを読んで「今の流行」「これから流行りそうなもの」「VTuberへのおすすめ」をまとめる
-  if (!CH_ONLY) try {
+  //      いちばん大事なので、AIの処理の最初に実行する（runInsight を C の先頭で呼ぶ）
+  async function runInsight() { if (CH_ONLY) return; try {
     const GJ = { all:'すべて', game:'ゲーム', song:'歌ってみた', talk:'雑談', plan:'企画', horror:'ホラー' };
     const lines = [];
     for (const g of GENRES) {
@@ -957,11 +951,11 @@ if (GEM) {
       '"strategy":[{"title":"YouTubeのアルゴリズム・戦略のポイント","detail":"登録者1万人未満のチャンネルの実データ（形式別の伸び率・企画スタイル・投稿時間帯・タイトル）を根拠にした説明（2〜3文）","actions":["具体的にやること1","やること2"]}],' +
       '"recommend":[{"target":"対象（例：登録者〜1,000人の新人／1,000〜5,000人／5,000〜1万人／歌が得意な人 など）","title":"おすすめの活動","steps":["具体的な手順1","手順2","手順3"]}],' +
       '"caution":["注意点（権利・ガイドライン・流行の終わりかけ等）"]}\n' +
-      'now は5個、next は5個、strategy は4〜5個（ショートと配信の使い分け、タイトル・サムネ、投稿時間・頻度、流行ワードの乗り方、登録者を増やす導線 など）、recommend は4個（すべて登録者1万人未満向け）、caution は2〜3個。\n\n' + lines.join('\n') }]);
+      'now は5個、next は5個、strategy は4〜5個（ショートと配信の使い分け、タイトル・サムネ、投稿時間・頻度、流行ワードの乗り方、登録者を増やす導線 など）、recommend は4個（すべて登録者1万人未満向け）、caution は2〜3個。\n\n' + lines.join('\n') }], { tier: 'high' });
     if (!data || !data.summary) throw new Error('分析結果が空');
     insight = { ...data, stats, d: day, model: MODEL };
     console.log('OK   AIトレンド分析');
-  } catch (e) { logErr('gemini insight', e); }
+  } catch (e) { logErr('gemini insight', e); } }
 } else {
   console.log('GEMINI_API_KEY なし：AIによる理由・記事はスキップ（画面ではルールベースの理由を表示）');
 }
