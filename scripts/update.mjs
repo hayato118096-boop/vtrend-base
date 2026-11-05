@@ -65,7 +65,7 @@ async function screenVideos(ids, videosMap) {
         'k=0（外す）：他人が作った反応集・まとめ・ニュース・ゴシップ・考察・解説（VTuberについて語るもの）、切り抜きチャンネル、ファンアート・ファンアニメ、広告・講座・宣伝、VTuberと関係ない一般の動画、日本語以外の動画。\n' +
         '迷う場合は k=1 にしてください。出力はJSON配列 [{"id":"動画ID","k":1}] のみ。\n\n' + lines }]);
       for (const x of data || []) if (x && x.id && (x.k === 0 || x.k === 1)) { aiv[x.id] = x.k; done++; }
-    } catch (e) { logErr('gemini screen', e); if (/quota|exhausted|rate/i.test(String(e.message))) break; }
+    } catch (e) { logErr('gemini screen', e); if (/使えるAIモデル|quota|exhausted|再試行の上限/i.test(String(e.message))) break; }
     await sleep(4500);
   }
   console.log(`OK   AI精査: ${done}本を判定（外す ${Object.values(aiv).filter(x => x === 0).length}本）`);
@@ -652,38 +652,68 @@ if (!AI_ONLY) {
 // =====================================================================
 // C. Gemini（任意）
 // =====================================================================
+// 使うモデルの候補（上から順に使い、混雑・無料枠切れのときは次のモデルに切り替える。無料枠はモデルごとに別）
+let MODELS = [];
+const deadModels = new Set();
 async function pickModel() {
-  // 使えるモデルを一覧から自動で選ぶ（flash 系で新しいもの）
   try {
     const j = await (await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${GEM}&pageSize=200`)).json();
     if (j.error) throw new Error(j.error.message);
     const names = (j.models || []).filter(m => (m.supportedGenerationMethods || []).includes('generateContent')).map(m => m.name.replace(/^models\//, ''));
-    diag.models = names.slice(0, 60);
-    const want = process.env.GEMINI_MODEL;
-    if (want && names.includes(want)) return want;
-    // Gemini 3.1 の Flash を優先（正式版 → プレビュー版の順）
-    const v31 = names.filter(n => /gemini-3\.1/.test(n) && /flash/.test(n) && !/lite|image|tts|live|audio|embedding/.test(n));
-    v31.sort((a, b) => /preview|exp/.test(a) - /preview|exp/.test(b) || a.length - b.length);
-    if (v31.length) return v31[0];
-    const flash = names.filter(n => /flash/.test(n) && !/lite|image|tts|live|audio|thinking|exp|preview|embedding/.test(n));
+    diag.models = names.slice(0, 80);
     const ver = n => { const m = /gemini-(\d+(?:\.\d+)?)/.exec(n); return m ? +m[1] : 0; };
-    flash.sort((a, b) => ver(b) - ver(a) || a.length - b.length);
-    return flash[0] || names.find(n => /flash/.test(n)) || names[0] || 'gemini-flash-latest';
-  } catch (e) { logErr('gemini models', e); return process.env.GEMINI_MODEL || 'gemini-flash-latest'; }
+    const NG = /image|tts|live|audio|thinking|embedding|omni|transcribe|robotics|computer|customtools|nano|banana/;
+    const pick = (re, notRe) => names.filter(n => /^gemini-/.test(n) && re.test(n) && !NG.test(n) && !(notRe && notRe.test(n))).sort((a, b) => ver(b) - ver(a) || a.length - b.length);
+    const list = [
+      process.env.GEMINI_MODEL,
+      'gemini-flash-latest',                     // 安定版の Flash（いちばん無料枠に余裕がある想定）
+      ...pick(/flash/, /lite|preview|exp/),       // 正式版の Flash（新しい順）
+      'gemini-flash-lite-latest',
+      ...pick(/flash-lite/, /preview|exp/),       // 正式版の Flash-Lite
+      ...pick(/flash/, null).filter(n => /preview|exp/.test(n)), // プレビュー版
+    ].filter((n, i, a) => n && names.includes(n) && a.indexOf(n) === i);
+    MODELS = list.length ? list : ['gemini-flash-latest'];
+  } catch (e) { logErr('gemini models', e); MODELS = [process.env.GEMINI_MODEL || 'gemini-flash-latest']; }
+  diag.modelList = MODELS.slice(0, 12);
+  return MODELS[0];
 }
 async function gemini(parts, { search = false } = {}) {
   const body = { contents: [{ parts }], generationConfig: { temperature: 0.4 } };
   if (search) body.tools = [{ google_search: {} }];
   else body.generationConfig.responseMimeType = 'application/json';
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${GEM}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  });
-  const j = await r.json();
-  if (j.error) throw new Error(j.error.message);
-  const cand = (j.candidates || [])[0] || {};
-  const text = ((cand.content && cand.content.parts) || []).map(p => p.text || '').join('');
-  const chunks = ((cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || []).map(c => c.web).filter(Boolean);
-  return { data: parseJSON(text), chunks };
+  const waited = new Set();
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const model = MODEL;
+    let j;
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEM}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      j = await r.json();
+    } catch (e) { j = { error: { message: String(e && e.message || e), code: 503 } }; }
+    if (!j.error) {
+      const cand = (j.candidates || [])[0] || {};
+      const text = ((cand.content && cand.content.parts) || []).map(p => p.text || '').join('');
+      const chunks = ((cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || []).map(c => c.web).filter(Boolean);
+      return { data: parseJSON(text), chunks };
+    }
+    const msg = String(j.error.message || ''), code = j.error.code;
+    const busy = code === 503 || /high demand|overloaded|unavailable|try again later/i.test(msg);
+    const quota = code === 429 || /quota|exhausted|rate.?limit/i.test(msg);
+    if (!busy && !quota) throw new Error(msg);
+    // 1分あたりの上限なら少し待って同じモデルでもう一度。混雑も1回だけ待つ
+    const m = /retry in ([\d.]+)s/i.exec(msg);
+    if (!waited.has(model) && ((m && +m[1] <= 65) || busy)) { waited.add(model); await sleep(((m ? +m[1] : 20) + 2) * 1000); continue; }
+    // それでもだめなら、このモデルは今回は使わず次のモデルへ
+    deadModels.add(model);
+    const next = MODELS.find(x => !deadModels.has(x));
+    if (!next) throw new Error('使えるAIモデルがありません（すべて混雑または無料枠切れ）: ' + msg);
+    console.log(`AIモデル切り替え: ${model} → ${next}（${busy ? '混雑' : '無料枠'}）`);
+    if (diag.switches == null) diag.switches = [];
+    if (diag.switches.length < 20) diag.switches.push(`${model} → ${next}`);
+    MODEL = next; diag.model = next;
+  }
+  throw new Error('AIの再試行の上限に達しました');
 }
 // CH_ONLY のときはAIを使わず、前回のAIの結果をそのまま残す
 const aiBuzz = CH_ONLY ? (prev.aiBuzz || {}) : {};
