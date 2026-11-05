@@ -10,6 +10,7 @@
 // ・新作ゲームは Steam ストアから取得（キー不要）
 // ・GEMINI_API_KEY があれば、Gemini（無料枠）で「伸びた理由」「流行の経緯」「ノウハウ記事（動画＋Web記事から作成・更新）」を作る
 // ・AI_ONLY=true のときは YouTube のデータ取得をせず、前回のデータで AI の部分だけ作り直す
+// ・CH_ONLY=true のときは動画のデータは前回のまま、チャンネルの情報（登録者・アイコン・総再生・注目動画）だけ更新する
 // =====================================================================
 import { readFile, writeFile } from 'node:fs/promises';
 
@@ -180,8 +181,11 @@ let prev = {};
 try { prev = JSON.parse(await readFile(OUT, 'utf8')); } catch { /* 初回 */ }
 // 旧データ（30日）を28日に読み替え
 if (prev.pools) for (const k of Object.keys(prev.pools)) if (k.endsWith('|30')) prev.pools[k.replace(/\|30$/, '|28')] = prev.pools[k];
-const AI_ONLY = process.env.AI_ONLY === 'true' && !!prev.pools;
-if (AI_ONLY) console.log('AI_ONLY モード：YouTube のデータは前回のものを使い、AI の部分だけ作り直します');
+// CH_ONLY：動画のデータは前回のまま、チャンネル（登録者・アイコン・総再生・注目動画）だけ更新し、ナレッジ記事を3本追加する（合計 約2,100ユニット）
+const CH_ONLY = process.env.CH_ONLY === 'true' && !!prev.pools;
+const AI_ONLY = (process.env.AI_ONLY === 'true' || CH_ONLY) && !!prev.pools;
+if (CH_ONLY) console.log('CH_ONLY モード：動画のデータは前回のものを使い、チャンネルの情報だけ更新します');
+else if (AI_ONLY) console.log('AI_ONLY モード：YouTube のデータは前回のものを使い、AI の部分だけ作り直します');
 
 let pools, videos, histDays, subs, tokens, tokens2, tokHist, suggestOut, gtrends, archive, chans, chv, chtop;
 let steam = prev.steam || null, classic = prev.classic || {};
@@ -196,8 +200,13 @@ if (AI_ONLY) {
   archive = prev.archive || {};
   suggestOut = prev.suggest || {};
   aiv = { ...(prev.aiv || {}) };
-  await screenVideos([...new Set(Object.entries(pools).filter(([k]) => !k.startsWith('clip|')).flatMap(([, ids]) => ids))], videos);
+  if (!CH_ONLY) await screenVideos([...new Set(Object.entries(pools).filter(([k]) => !k.startsWith('clip|')).flatMap(([, ids]) => ids))], videos);
   for (const k of Object.keys(pools)) pools[k] = pools[k].filter(id => videos[id] && (k.startsWith('clip|') ? isJP(videos[id]) : keepVideo(videos[id], k.split('|')[0])));
+  if (CH_ONLY) {
+    const subsNow = {};
+    await fetchChannels([...new Set(Object.values(videos).map(v => v.chId))], subsNow);
+    await channelSteps(subsNow);
+  }
 } else {
   // -------------------------------------------------------------------
   // 1. 動画プール：ジャンル × 形式 × (7日[2ページ] / 28日[1ページ] / 新着[1ページ])
@@ -301,9 +310,15 @@ if (AI_ONLY) {
   const used = new Set(Object.values(pools).flat());
   for (const id of Object.keys(videos)) if (!used.has(id)) delete videos[id];
 
-  // -------------------------------------------------------------------
+  // 4. 登録者推移・チャンネル台帳・チャンネルの注目動画（channelSteps）
+  await channelSteps(subsNow);
+}
+
+// =====================================================================
+// 4〜4.6 チャンネルまわり（通常の更新と「チャンネルだけ更新」で共通）
+// =====================================================================
+async function channelSteps(subsNow) {
   // 4. 登録者推移（日本時間の日付ごと、最大28日）
-  // -------------------------------------------------------------------
   histDays = Array.isArray(prev.histDays) ? prev.histDays.slice() : [];
   const prevSubs = prev.histDays ? (prev.subs || {}) : {};
   if (histDays[histDays.length - 1] !== day) histDays.push(day);
@@ -354,12 +369,14 @@ if (AI_ONLY) {
   };
   const bands = {};
   for (const id of Object.keys(chans)) { const b = band(subsNow[id]); if (b >= 0) (bands[b] = bands[b] || []).push([id, momentum(id)]); }
-  const want = Object.values(bands).flatMap(l => l.sort((a, b) => b[1] - a[1]).slice(0, 45).map(x => x[0]));
+  // 通常は規模ごとに45件。CH_ONLY（残りの枠を使う更新）では100件まで広げる
+  const want = Object.values(bands).flatMap(l => l.sort((a, b) => b[1] - a[1]).slice(0, CH_ONLY ? 100 : 45).map(x => x[0]));
   const todoTop = want.filter(id => !chtop[id] || now - Date.parse(chtop[id].d) >= 2 * 864e5);
   const fetched = [];
   for (const id of todoTop) {
-    // このあとの歴代名作の計測・ナレッジ用の検索（合計約1,000ユニット）の分を残しておく
-    if (units > 8000) { logErr('chtop', new Error('YouTubeの無料枠の残りが少ないため途中で止めました')); break; }
+    // 通常：このあとの歴代名作の計測・ナレッジ用の検索（合計約1,000ユニット）の分を残しておく
+    // CH_ONLY：その日の残りの枠の中で止める（このあとのナレッジ3本＝300ユニットを残して、合計 約2,100）
+    if (units > (CH_ONLY ? 1800 : 8000)) { logErr('chtop', new Error('YouTubeの無料枠の残りが少ないため途中で止めました')); break; }
     try {
       const pl = await yt('playlistItems', { part: 'contentDetails', playlistId: 'UU' + id.slice(2), maxResults: 50 }, 1);
       const ids = (pl.items || []).map(it => it.contentDetails && it.contentDetails.videoId).filter(Boolean);
@@ -372,7 +389,7 @@ if (AI_ONLY) {
           sh: (prev.videos && prev.videos[it.id] && prev.videos[it.id].sh) ?? (videos[it.id] && videos[it.id].sh) ?? null };
       });
       fetched.push([id, items]);
-    } catch (e) { logErr(`chtop ${id}`, e); }
+    } catch (e) { logErr(`chtop ${id}`, e); if (/quota/i.test(String(e.message))) break; }
   }
   await checkShorts(fetched.flatMap(([, items]) => items), 3000);
   for (const [id, items] of fetched) {
@@ -382,7 +399,9 @@ if (AI_ONLY) {
     chtop[id] = { d: day, n: items.length, ...top };
   }
   console.log(`OK   チャンネルの注目動画: ${fetched.length}チャンネルを更新（保存 ${Object.keys(chtop).length}チャンネル）`);
+}
 
+if (!AI_ONLY) {
   // -------------------------------------------------------------------
   // 5. 話題ワード（動画タイトルの【】『』#タグ）ジャンル × 形式 × 7日/28日
   // -------------------------------------------------------------------
@@ -666,8 +685,9 @@ async function gemini(parts, { search = false } = {}) {
   const chunks = ((cand.groundingMetadata && cand.groundingMetadata.groundingChunks) || []).map(c => c.web).filter(Boolean);
   return { data: parseJSON(text), chunks };
 }
-const aiBuzz = {};
-const aiTok = {};
+// CH_ONLY のときはAIを使わず、前回のAIの結果をそのまま残す
+const aiBuzz = CH_ONLY ? (prev.aiBuzz || {}) : {};
+const aiTok = CH_ONLY ? (prev.aiTok || {}) : {};
 let insight = null;
 let notes = Array.isArray(prev.notes) ? prev.notes.slice() : [];
 const ratioOf = v => v.subs ? v.views / v.subs : 0;
@@ -676,6 +696,8 @@ if (GEM) {
   diag.model = MODEL;
   console.log(`AIモデル: ${MODEL}`);
 
+  // CH_ONLY のときは C-1・C-2・C-4 はしない（ナレッジ記事だけ追加で作る）
+  if (!CH_ONLY) {
   // C-1. バズ動画の理由（ジャンルごと上位10本、過去に書いたものは再利用）
   const oldBuzz = prev.aiBuzz || {};
   for (const g of GENRES) {
@@ -720,6 +742,7 @@ if (GEM) {
     }
     await sleep(7000);
   }
+  }
 
   // C-3. ノウハウ記事：毎日2テーマ。YouTube動画＋Web記事を読んで、新しい記事を作るか、似た記事を修正する
   // focus：動画・記事から何を拾うか（カテゴリごと）
@@ -736,7 +759,9 @@ if (GEM) {
   ];
   const CAT_JA = { algo: 'アルゴリズム攻略', talk: 'トーク力', short: 'ショート動画のコツ', obs: 'OBS・配信設定', thumb: 'サムネイル・タイトル術', edit: '動画編集のコツ', ai: 'AI活用術', live: '配信・VTuber運用', mental: 'メンタル・リスナー維持' };
   const usedSrc = new Set(notes.flatMap(n => (n.sources || []).map(s => s.url)));
-  for (let i = 0; i < 2; i++) {
+  // 通常は毎日2本（i=0,1）。CH_ONLY（残りの枠を使う更新）では別のテーマで3本追加（i=2,3,4）
+  const NOTE_FROM = CH_ONLY ? 2 : 0, NOTE_N = CH_ONLY ? 3 : 2;
+  for (let i = NOTE_FROM; i < NOTE_FROM + NOTE_N; i++) {
     const topic = TOPICS[(dayNo * 2 + i) % TOPICS.length];
     const q = topic.q[(dayNo + i) % topic.q.length];
     const sources = [];
@@ -795,7 +820,7 @@ if (GEM) {
   notes = notes.slice(0, 400);
 
   // C-4. AIトレンド分析：全データを読んで「今の流行」「これから流行りそうなもの」「VTuberへのおすすめ」をまとめる
-  try {
+  if (!CH_ONLY) try {
     const GJ = { all:'すべて', game:'ゲーム', song:'歌ってみた', talk:'雑談', plan:'企画', horror:'ホラー' };
     const lines = [];
     for (const g of GENRES) {
