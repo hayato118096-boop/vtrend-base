@@ -691,15 +691,17 @@ function chooseModel(tier) {
   const ok = m => MODELS.includes(m) && !deadModels.has(m) && (usedCalls[m] || 0) < (LIMITS[m] ?? 999);
   return order.find(ok) || MODELS.find(ok) || null;
 }
-async function gemini(parts, { search = false, tier = 'lite' } = {}) {
+async function gemini(parts, { search = false, tier = 'lite', lowMedia = false, deadline = AI_DEADLINE } = {}) {
   const body = { contents: [{ parts }], generationConfig: { temperature: 0.4 } };
   if (search) body.tools = [{ google_search: {} }];
   else body.generationConfig.responseMimeType = 'application/json';
-  // GitHub の実行時間の上限（45分）までに保存できるよう、開始から33分を過ぎたらAIは使わない
-  if (Date.now() - now > AI_DEADLINE) throw new Error('時間切れ：AIの処理を打ち切りました（保存を優先）');
+  // 映像を見せるときは画質を落として、無料枠の量（トークン）を節約する
+  if (lowMedia) body.generationConfig.mediaResolution = 'MEDIA_RESOLUTION_LOW';
+  // GitHub の実行時間の上限（45分）までに保存できるよう、開始から33分を過ぎたらAIは使わない（メンバーの配信分析は40分まで）
+  if (Date.now() - now > deadline) throw new Error('時間切れ：AIの処理を打ち切りました（保存を優先）');
   const waited = new Map();
   for (let attempt = 0; attempt < 30; attempt++) {
-    if (Date.now() - now > AI_DEADLINE) throw new Error('時間切れ：AIの処理を打ち切りました（保存を優先）');
+    if (Date.now() - now > deadline) throw new Error('時間切れ：AIの処理を打ち切りました（保存を優先）');
     const model = chooseModel(tier);
     if (!model) throw new Error('使えるAIモデルがありません（すべて回数を使い切った・混雑・使えないモデル）');
     if (model !== MODEL) { console.log(`AIモデル: ${model}（${tier === 'high' ? '高性能' : '軽量'}の仕事）`); MODEL = model; }
@@ -743,6 +745,143 @@ async function gemini(parts, { search = false, tier = 'lite' } = {}) {
   }
   throw new Error('AIの再試行の上限に達しました');
 }
+// =====================================================================
+// C-5. メンバーの配信を映像で分析
+//   ・members.json に書いたチャンネルの、最近の配信・動画（10分以上）が対象
+//   ・Gemini に映像を30分ずつ見せて（画質を落として節約）、5分ごとの中身と「見どころの瞬間」を書いてもらう
+//   ・チャットのリプレイ（キー不要）を数えて盛り上がりを出す
+//   ・全部の区間が終わったら、高性能モデルで「流れ・見どころ・話題・切り抜き案」にまとめる
+//   ・1日に映像を見せるのは MY_CALLS 回まで。終わらなかった分は次の日に続きから
+// =====================================================================
+const MY_CALLS = 10, MY_CHUNK = 1800, MY_DEADLINE = 40 * 60e3;
+const myDeep = (prev.my && typeof prev.my === 'object') ? prev.my : {};
+const hms = s => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 3600)}:${String(Math.floor(s % 3600 / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+const toSec = t => typeof t === 'number' ? t : String(t || '').split(':').reduce((a, x) => a * 60 + (+x || 0), 0);
+async function fetchChat(id) {
+  const H = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36', 'Accept-Language': 'ja-JP,ja;q=0.9' };
+  const html = await (await fetch(`https://www.youtube.com/watch?v=${id}&hl=ja`, { headers: H })).text();
+  const cv = (/"INNERTUBE_CLIENT_VERSION":"([^"]+)"/.exec(html) || [])[1];
+  let c = (/"liveChatRenderer":\{"continuations":\[\{"reloadContinuationData":\{"continuation":"([^"]+)"/.exec(html) || [])[1];
+  if (!c || !cv) return null; // チャットのリプレイがない（普通の動画・チャットなし）
+  const seen = new Set(), msgs = new Map();
+  for (let n = 0; c && !seen.has(c) && n < 300; n++) {
+    seen.add(c);
+    const r = await fetch('https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?prettyPrint=false', {
+      method: 'POST', headers: { ...H, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context: { client: { clientName: 'WEB', clientVersion: cv, hl: 'ja', gl: 'JP' } }, continuation: c }) });
+    if (!r.ok) break;
+    const lc = ((await r.json()).continuationContents || {}).liveChatContinuation || {};
+    for (const a of lc.actions || []) {
+      const ra = a.replayChatItemAction; if (!ra) continue;
+      for (const it of ra.actions || []) {
+        const m = it.addChatItemAction && it.addChatItemAction.item && it.addChatItemAction.item.liveChatTextMessageRenderer;
+        if (!m || !m.message) continue;
+        const text = (m.message.runs || []).map(x => x.text || (x.emoji && (x.emoji.shortcuts || [])[0]) || '').join('');
+        msgs.set(m.id, [Math.round(+(ra.videoOffsetTimeMsec || 0) / 1000), (m.authorName && m.authorName.simpleText) || '', text.slice(0, 80)]);
+      }
+    }
+    c = (((lc.continuations || [])[0] || {}).liveChatReplayContinuationData || {}).continuation;
+    await sleep(300);
+  }
+  return [...msgs.values()].sort((a, b) => a[0] - b[0]);
+}
+async function memberSteps() {
+  let members = [];
+  try { members = JSON.parse(await readFile(new URL('../members.json', import.meta.url), 'utf8')); } catch (e) { logErr('members.json', e); return; }
+  // 1. メンバーの最近の配信・動画（YouTube APIは1人2ユニット）
+  const list = [];
+  for (const m of members) {
+    try {
+      const pl = await yt('playlistItems', { part: 'contentDetails', playlistId: 'UU' + m.cid.slice(2), maxResults: 15 }, 1);
+      const ids = (pl.items || []).map(x => x.contentDetails.videoId);
+      if (!ids.length) continue;
+      const vj = await yt('videos', { part: 'snippet,contentDetails,liveStreamingDetails,statistics', id: ids.join(',') }, 1);
+      for (const v of vj.items || []) {
+        const dur = isoDur(v.contentDetails.duration), live = v.liveStreamingDetails;
+        if (v.snippet.liveBroadcastContent !== 'none' || dur < 600) continue; // 配信中・予定・10分未満は対象外
+        if (/メン限|メンバー限定|members only/i.test(v.snippet.title)) continue; // メンバー限定はAIが見られない
+        const x = myDeep[v.id] = myDeep[v.id] || { cid: m.cid, name: m.name, chunks: Math.ceil(dur / MY_CHUNK), done: 0, seg: [], mom: [] };
+        Object.assign(x, { title: v.snippet.title, dur, at: (live && live.actualStartTime) || v.snippet.publishedAt, stream: !!live, views: +v.statistics.viewCount || 0, likes: +v.statistics.likeCount || 0 });
+        list.push(v.id);
+      }
+    } catch (e) { logErr(`member list ${m.name}`, e); }
+  }
+  // 2. 新しい順に、終わっていない配信の続きを分析
+  const todo = list.filter(id => !myDeep[id].deep && !myDeep[id].skip).sort((a, b) => Date.parse(myDeep[b].at) - Date.parse(myDeep[a].at));
+  let calls = 0;
+  for (const id of todo) {
+    const x = myDeep[id], url = `https://www.youtube.com/watch?v=${id}`;
+    // チャット（最初の1回だけ集める）
+    if (!x.chatDone) {
+      try {
+        const msgs = await fetchChat(id);
+        if (msgs) {
+          const n10 = Math.ceil(x.dur / 600), cnt = new Array(n10).fill(0);
+          msgs.forEach(([s]) => cnt[Math.min(n10 - 1, Math.floor(s / 600))]++);
+          x.chat = cnt; x.chatN = msgs.length; x.people = new Set(msgs.map(m => m[1])).size;
+          x.lines = msgs.slice(0, 400); // まとめが終わったら消す
+        }
+        x.chatDone = 1;
+      } catch (e) { logErr(`member chat ${id}`, e); x.chatDone = 1; }
+    }
+    // 30分ずつ映像を見せる
+    while (x.done < x.chunks && calls < MY_CALLS && Date.now() - now < MY_DEADLINE) {
+      const s = x.done * MY_CHUNK, e = Math.min(x.dur, s + MY_CHUNK);
+      const chat = (x.lines || []).filter(m => m[0] >= s && m[0] < e).slice(0, 80).map(m => `${hms(m[0])} ${m[2]}`).join('\n');
+      try {
+        calls++;
+        const { data } = await gemini([
+          { file_data: { file_uri: url }, video_metadata: { start_offset: `${s}s`, end_offset: `${e}s`, fps: 0.5 } },
+          { text: `これはYouTubeの${x.stream ? '配信' : '動画'}「${x.title}」の ${hms(s)}〜${hms(e)} の部分です。` +
+            '映像と音声を見て、5分ごとに区切って何が起きているかを日本語で書いてください。ゲームなら場面（ボス戦・ムービー・探索・メニュー・レベル上げ など）と、映像として見ごたえがある瞬間（大技・召喚・変身・巨大な敵・きれいな景色・名シーンのムービー・大きなリアクション）を重視してください。\n' +
+            '時間は「この部分の最初を0秒」とした秒数（整数）で書いてください。\n' +
+            '出力はJSONのみ: {"seg":[{"s":0,"scene":"場面（10文字以内）","what":"何が起きているか（1〜2文）","talk":"配信者が話している話題（なければ空）","look":0〜5の映像の見ごたえ,"hype":0〜5の盛り上がり}],' +
+            '"mom":[{"s":秒,"what":"見どころの瞬間（20文字以内）","why":"なぜ見ごたえがあるか・切り抜きに向くか（1文）","look":1〜5}]}\n' +
+            'seg は5分ごと（0, 300, 600 …）、mom はこの部分の中で特に見ごたえがある瞬間を0〜5個。' +
+            (chat ? `\n\n参考：この時間のチャット（時間は配信の最初から）\n${chat}` : '') }
+        ], { tier: 'lite', lowMedia: true, deadline: MY_DEADLINE });
+        if (!data || !Array.isArray(data.seg)) throw new Error('映像の分析結果が空');
+        data.seg.forEach(g => x.seg.push({ t: hms(s + toSec(g.s)), scene: String(g.scene || '').slice(0, 20), what: String(g.what || '').slice(0, 160), talk: String(g.talk || '').slice(0, 100), look: +g.look || 0, hype: +g.hype || 0 }));
+        (data.mom || []).forEach(g => x.mom.push({ t: hms(s + toSec(g.s)), what: String(g.what || '').slice(0, 40), why: String(g.why || '').slice(0, 120), look: +g.look || 0 }));
+        x.done++;
+        console.log(`OK   member video ${id} ${hms(s)}〜${hms(e)}`);
+      } catch (err) {
+        logErr(`member video ${id} ${hms(s)}`, err);
+        // 無料枠を使い切った・時間切れのときは、今日はここまで
+        if (/使えるAIモデル|時間切れ|再試行の上限/.test(String(err.message))) calls = MY_CALLS;
+        // 見られない動画（非公開・メンバー限定など）は次から飛ばす
+        if (/permission|private|not available|unavailable|invalid|unsupported/i.test(String(err.message)) && !/high demand|overloaded/i.test(String(err.message))) x.skip = 1;
+        break;
+      }
+      await sleep(30000); // 1分あたりの量の上限に引っかからないように間をあける
+    }
+    // 3. 全部の区間が終わったら、流れ・見どころ・話題・切り抜き案にまとめる
+    if (x.done >= x.chunks && !x.deep && Date.now() - now < MY_DEADLINE) {
+      try {
+        const segs = x.seg.map(g => `${g.t}｜${g.scene}｜${g.what}${g.talk ? '｜話題:' + g.talk : ''}｜見ごたえ${g.look}・盛り上がり${g.hype}`).join('\n');
+        const moms = x.mom.map(g => `${g.t}｜${g.what}｜${g.why}｜見ごたえ${g.look}`).join('\n');
+        const chatTxt = (x.lines || []).slice(0, 250).map(m => `${hms(m[0])} ${m[2]}`).join('\n');
+        const { data } = await gemini([{ text:
+          `あなたはVTuberの配信プロデューサー兼切り抜き編集者です。次は${x.stream ? '配信' : '動画'}「${x.title}」（長さ ${hms(x.dur)}・再生${x.views}回・高評価${x.likes}）の分析メモです。\n` +
+          '5分ごとの映像の中身・見どころの瞬間・チャットをもとに、日本語でまとめてください。時間は "h:mm:ss" で、メモにある時間だけを使ってください。推測は「〜と考えられる」と書いてください。\n' +
+          '出力はJSONのみ: {"flow":[["開始","終了","場面の名前","何をしていたか"]],"vis":[["時間","映像で見ごたえがある所","なぜ見ごたえがあるか"]],' +
+          '"topics":[["時間","話した話題"]],"sat":["満足度が高かったと考えられる所（理由つき）"],"hot":[["開始","終了","盛り上がった内容"]],"quiet":[["開始","終了","静かだった・離れやすい理由"]],' +
+          '"clips":[["開始","終了","ショート または 切り抜き（◯〜◯分）","タイトル案","この範囲を選んだ理由"]],"viewers":"見ていた人の様子（1文）"}\n' +
+          'flow は5〜12個、vis は3〜7個、topics は3〜10個、sat は2〜4個、hot は2〜4個、quiet は1〜3個、clips は3〜6個（ショートは映像の見ごたえ＋反応がそろった所を優先、60秒前後に収まる範囲。切り抜きは話題のまとまり）。\n\n' +
+          `【5分ごとの中身】\n${segs}\n\n【見どころの瞬間】\n${moms || 'なし'}\n\n【10分ごとのチャット数】${(x.chat || []).join(',') || 'チャットなし'}\n\n【チャット】\n${chatTxt || 'なし'}` }], { tier: 'high', deadline: MY_DEADLINE });
+        if (!data || !Array.isArray(data.clips)) throw new Error('まとめの結果が空');
+        x.deep = { ...data, chat: x.chat, src: `映像：Geminiが30分ずつ見て5分ごとに確認（${x.seg.length}区間）／チャット：${x.chatN ? `${x.chatN}件（${x.people}人）` : 'なし'}` };
+        x.d = day; delete x.lines;
+        console.log(`OK   member deep ${id}`);
+      } catch (err) { logErr(`member deep ${id}`, err); }
+    }
+    if (calls >= MY_CALLS || Date.now() - now > MY_DEADLINE) break;
+  }
+  // 古いものは消す（最新60本だけ残す）
+  Object.keys(myDeep).sort((a, b) => Date.parse(myDeep[b].at || 0) - Date.parse(myDeep[a].at || 0)).slice(60).forEach(id => delete myDeep[id]);
+  diag.member = { videos: list.length, calls, todo: todo.length };
+}
+
 // CH_ONLY のときはAIを使わず、前回のAIの結果をそのまま残す
 const aiBuzz = CH_ONLY ? (prev.aiBuzz || {}) : {};
 const aiTok = CH_ONLY ? (prev.aiTok || {}) : {};
@@ -889,6 +1028,9 @@ if (GEM) {
   }
   notes = notes.slice(0, 400);
 
+  // C-5. メンバーの配信を映像で分析（マイチャンネルの「コンテンツ別」に出す）
+  await memberSteps();
+
   // C-4. AIトレンド分析：全データを読んで「今の流行」「これから流行りそうなもの」「VTuberへのおすすめ」をまとめる
   //      いちばん大事なので、AIの処理の最初に実行する（runInsight を C の先頭で呼ぶ）
   async function runInsight() { if (CH_ONLY) return; try {
@@ -965,6 +1107,8 @@ const out = {
   updated: AI_ONLY ? prev.updated : new Date(now).toISOString(), units, ai: !!GEM, diag,
   pools, videos, histDays, subs, tokens, tokens2, tokHist, archive,
   suggest: suggestOut, gtrends, aiBuzz, aiTok, notes, steam, classic, chans, chv, chtop,
+  // メンバーの配信の映像分析（マイチャンネル用）
+  my: myDeep,
   // AIの精査結果（今のデータに出てくる動画の分だけ残す）
   aiv: Object.fromEntries(Object.entries(aiv).filter(([id]) => videos[id])),
   // AIトレンド分析（最新＋過去14日分）
