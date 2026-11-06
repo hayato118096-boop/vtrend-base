@@ -76,6 +76,7 @@ tailwind.config = {
   </nav>
   <!-- マイチャンネルを開いているときは、上のタブがマイチャンネル用に切り替わる -->
   <nav id="myNav" class="hidden max-w-7xl mx-auto px-1 sm:px-2 mt-1 flex scroll-x" role="tablist">
+    <button class="tab mytab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-myview="home" role="tab">🏠 アカウント</button>
     <button class="tab mytab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-myview="review" role="tab">📋 総評</button>
     <button class="tab mytab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-myview="content" role="tab">🎬 コンテンツ別</button>
     <button class="tab mytab relative px-3 sm:px-4 py-3 text-sm font-bold text-muted hover:text-ink whitespace-nowrap" data-myview="num" role="tab">📊 数字</button>
@@ -441,22 +442,91 @@ function buildList({ genre, format, period, cap = 'all', sort = 'ratio', minView
   }
   return { list, supSet };
 }
+// 伸びた理由（データから計算）：決まり文句ではなく、この動画の数字を「同じ形式の動画」「同じチャンネルのほかの動画」と比べて具体的に書く
+const FMT_JA = { stream: '配信', short: 'ショート', video: '動画' };
+let _cmpCache = null;
+function cmpPool(f, g) {
+  // 同じ形式（と同じジャンル）の動画の中央値。データを読み込み直すまで使い回す
+  if (!_cmpCache || _cmpCache.d !== S.data) _cmpCache = { d: S.data, m: {} };
+  const k = f + '|' + (g || ''); if (_cmpCache.m[k]) return _cmpCache.m[k];
+  const vs = Object.values(S.data.videos).filter(x => !x.ct && !isClip(x) && x.fmt === f && (!g || x.genre === g) && x.views > 0);
+  const md = fn => median(vs.map(fn).filter(x => x != null && isFinite(x)));
+  return _cmpCache.m[k] = { n: vs.length, vs, ratio: md(x => x.ratio), perDay: md(x => x.views / Math.max(ageDays(x), 0.05)),
+    like: md(x => x.views >= 100 ? x.likes / x.views : null), com: md(x => x.views >= 100 ? x.comments / x.views : null), dur: md(x => x.dur || null) };
+}
+const timesTxt = (a, b) => !b ? '' : a / b >= 1.15 ? `${(a / b).toFixed(a / b >= 10 ? 0 : 1)}倍` : a / b <= 0.87 ? `${Math.round(a / b * 100)}%` : 'ほぼ同じ';
+const relTxt = (a, b, lab = '真ん中') => { const t = timesTxt(a, b); return t === 'ほぼ同じ' ? `${lab}とほぼ同じ` : `${lab}の${t}`; };
+const pctTop =(arr, x) => { const s = arr.filter(y => y != null && isFinite(y)); if (s.length < 10) return null; const above = s.filter(y => y > x).length; return Math.max(1, Math.round(above / s.length * 100)); };
+const jst = t => { const d = new Date(+t + 9 * 3600e3); return { md: `${d.getUTCMonth() + 1}/${d.getUTCDate()}`, wd: '日月火水木金土'[d.getUTCDay()], h: d.getUTCHours(), hm: `${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, '0')}` }; };
 function ruleReasons(v) {
-  const R = [], r = v.ratio, d = Math.max(ageDays(v), 0.05), perDay = v.views / d;
+  const R = [], r = v.ratio, d = Math.max(ageDays(v), 0.05), perDay = v.views / d, F = FMT_JA[v.fmt] || '動画';
   const like = v.views ? v.likes / v.views : 0, com = v.views ? v.comments / v.views : 0;
-  if (r != null && r >= 5) R.push(['🚀', `登録者の${r.toFixed(1)}倍再生`, 'チャンネル登録者以外にも大きく広がっています。おすすめ・関連動画・検索から新しい視聴者が流入したと考えられます。']);
-  else if (r != null && r >= 1.5) R.push(['📈', `登録者の${r.toFixed(1)}倍再生`, '普段の視聴者層を超えて再生されています。']);
-  if (d <= 7 && perDay >= 10000) R.push(['⚡', '初速が強い', `公開から${d < 1 ? Math.max(1, Math.round(d*24))+'時間' : Math.round(d)+'日'}で${fmt(v.views)}回（${d < 1 ? '1時間あたり約' + fmt(v.views / Math.max(d * 24, 1)) : '1日あたり約' + fmt(perDay)}回）。公開直後の反応が良く、おすすめに押し上げられたと考えられます。`]);
-  if (like >= 0.05) R.push(['👍', `高評価率 ${(like*100).toFixed(1)}%`, '満足度が高い動画は、おすすめに表示されやすくなります。']);
-  if (com >= 0.004) R.push(['💬', 'コメントが活発', `コメント率 ${(com*100).toFixed(2)}%。視聴者の参加や盛り上がりが起きています。`]);
-  const tk = [...tokenize(v.title).keys()];
-  ((S.data.tokens || {}).all || []).filter(t => tk.includes(t.k || t.w.toLowerCase())).slice(0, 2)
-    .forEach(t => R.push(['🔥', `流行ワード「${t.w}」`, `今週「${t.w}」を含む動画が${t.n}本あり、話題の波に乗っています。`]));
-  styleOf(v.title).slice(0, 2).forEach(s => R.push(['🎯', `企画スタイル：${s}`, { '参加型':'視聴者が一緒に遊べるため、配信に来る理由が生まれやすい企画です。', 'コラボ':'複数の配信者のファンが、お互いのチャンネルに流れ込みやすい企画です。', '耐久':'「どうなるか見届けたい」心理で長く見られやすい形式です。', '初見':'初見ならではのリアクションが切り抜き・ショートの素材になりやすいです。' }[s] || 'よく使われている企画の形です。']));
-  if (v.fmt === 'short') R.push(['📱', 'ショート動画', 'スワイプで次々と表示されるため、登録者以外の人に届きやすい形式です。']);
-  if (v.fmt === 'stream') R.push(['🔴', v.live != null ? '配信中' : '配信アーカイブ', v.live != null ? `今まさに配信中で、同時接続 ${fmt(v.live)}人。` : 'ライブ配信の盛り上がりが、そのままアーカイブの再生につながっています。']);
-  if (v.subs != null && v.subs < 10000 && v.views >= 50000) R.push(['🌱', '小規模チャンネルからのバズ', `登録者${fmt(v.subs)}人のチャンネルから${fmt(v.views)}回再生。企画やサムネイルの力で伸びた例です。`]);
-  if (!R.length) R.push(['📊', '安定した再生', '突出した要因は見当たりませんが、ジャンル内で上位の再生数です。']);
+  const title = v.title || '', head = title.slice(0, 22), topic = ((/【([^】]+)】/.exec(title) || [])[1] || title.slice(0, 16)).trim();
+  const P = cmpPool(v.fmt, v.genre), PA = cmpPool(v.fmt), gName = v.genre && typeof GLABEL !== 'undefined' && GLABEL[v.genre] ? GLABEL[v.genre] + 'の' : '';
+  const ageTxt = d < 1 ? Math.max(1, Math.round(d * 24)) + '時間' : Math.round(d) + '日';
+  // 同じチャンネルのほかの動画（データにあるもの）と比べる
+  const mine = Object.values(S.data.videos).filter(x => x.chId === v.chId && x.id !== v.id && x.views > 0);
+  const mineSame = mine.filter(x => x.fmt === v.fmt), best = mineSame.slice().sort((a, b) => b.views - a.views)[0], mMed = median(mineSame.map(x => x.views));
+
+  // 1. 登録者の外に広がったか
+  if (r != null && r >= 1.5) {
+    const top = pctTop(P.vs.map(x => x.ratio), r), outside = v.subs ? Math.max(0, 1 - v.subs / v.views) : null;
+    R.push([r >= 5 ? '🚀' : '📈', `登録者の${r.toFixed(1)}倍再生`,
+      `登録者${fmt(v.subs)}人に対して${fmt(v.views)}回。仮に登録者全員が1回ずつ見ても${fmt(v.subs)}回なので、${outside != null ? `再生の少なくとも${Math.floor(outside * 100)}%は登録していない人から` : '多くは登録していない人から'}来ています。`
+      + (P.ratio ? `今週集めた${gName}${F}（${P.n}本）の「再生÷登録者」の真ん中は×${P.ratio.toFixed(1)}なので、${relTxt(r, P.ratio)}${top ? `（上位${top}%）` : ''}です。` : '')
+      + (r >= 5 ? 'ここまで差が大きいときは、ホーム・関連動画のおすすめや検索で、登録者以外に繰り返し表示されたと考えられます。' : '')]);
+  }
+  // 2. 伸びるスピード
+  if (d <= 14 && v.views >= 1000) {
+    const pd = P.perDay, top = pctTop(P.vs.map(x => x.views / Math.max(ageDays(x), 0.05)), perDay), t = jst(v.published);
+    R.push(['⚡', `公開${ageTxt}で${fmt(v.views)}回`,
+      `${d < 1 ? '1時間あたり約' + fmt(v.views / Math.max(d * 24, 1)) : '1日あたり約' + fmt(perDay)}回のペース。` + (pd ? `同じ${gName}${F}の真ん中は1日約${fmt(pd)}回なので、${relTxt(perDay, pd)}${top ? `（上位${top}%）` : ''}。` : '')
+      + `${v.fmt === 'stream' ? '配信開始' : '公開'}は${t.md}（${t.wd}）${t.hm}${t.h >= 18 && t.h <= 23 ? 'で、見る人が多い夜の時間帯' : t.h >= 0 && t.h < 5 ? 'の深夜で、競争が少ない時間帯' : t.wd === '土' || t.wd === '日' ? 'の週末' : ''}。`
+      + (d <= 3 && (!P.like || like >= P.like * 0.8) ? '公開してすぐの数日でこの数字なので、最初に見た人の反応（最後まで見る・高評価）が良く、おすすめに広げられたと考えられます。' : '')]);
+  }
+  // 3. チャンネルの中で特別な1本か
+  if (best && mineSame.length >= 2) {
+    R.push(['🏔', v.views > best.views ? `このチャンネルの${F}でいちばん伸びている` : `このチャンネルのいつもの${F}と比べて：${relTxt(v.views, mMed, 'いつも')}`,
+      `データにある同じチャンネルの${F}${mineSame.length}本の再生の真ん中は${fmt(mMed)}回。今回の${fmt(v.views)}回は${relTxt(v.views, mMed)}${v.views > best.views ? `で、2番目の「${best.title.slice(0, 30)}${best.title.length > 30 ? '…' : ''}」（${fmt(best.views)}回）も超えています` : ''}。`
+      + (mMed && v.views / mMed >= 3 ? 'いつもと同じ見せ方の中でこの1本だけ突き抜けているので、伸びたのは「題材・企画（タイトルとサムネに出ている内容）」の力が大きいと考えられます。'
+        : v.subs && mMed / v.subs >= 3 ? `ほかの回も毎回、登録者の約${Math.round(mMed / v.subs)}倍見られています。1本だけのバズではなく、${v.fmt === 'short' ? `このチャンネルのショート（「${topic}」など）が、ショートのフィードで毎回、登録していない人に届いている形と考えられます。` : `このチャンネルが扱う題材（「${topic}」など）を探している人が、検索や関連動画から毎回来ている形と考えられます。`}${like < (P.like || 0) * 0.5 ? `高評価率が${(like * 100).toFixed(1)}%と低いのも、ファンより「情報を見に来た人」が多いことと合っています。` : ''}`
+        : 'ほかの回も同じくらい見られているので、チャンネルの固定ファンがしっかり見に来ている形です。')]);
+  }
+  // 4. 見た人の反応（高評価・コメント）
+  if (v.views >= 300 && P.like) {
+    R.push(['👍', `高評価率 ${(like * 100).toFixed(1)}%・コメント率 ${(com * 100).toFixed(2)}%`,
+      `同じ${gName}${F}の真ん中は高評価率${(P.like * 100).toFixed(1)}%${P.com ? `・コメント率${(P.com * 100).toFixed(2)}%` : ''}。今回は高評価が${relTxt(like, P.like)}${P.com ? `、コメントが${relTxt(com, P.com)}` : ''}。`
+      + (like / P.like >= 1.3 ? '見た人の満足度が高く、それがおすすめに表示され続ける理由の1つと考えられます。' : like / P.like <= 0.8 ? '反応の割合は低めなので、強い入口（タイトル・サムネ・話題性）で人が集まった一方、見た人全員が満足したわけではない形です。' : '')
+      + (com / (P.com || 1) >= 1.5 ? `コメント${fmt(v.comments)}件は、視聴者が参加したくなる内容（質問・ツッコミどころ・参加型）があったことを示しています。` : '')]);
+  }
+  // 5. タイトルの作り
+  const tk = [...tokenize(title).keys()];
+  const hot = ((S.data.tokens || {}).all || []).filter(t => tk.includes(t.k || t.w.toLowerCase())).slice(0, 3);
+  const tparts = [];
+  tparts.push(`長さは${title.length}文字。スマホの一覧で最初に見えるのは前の20文字ほど（「${head}${title.length > 22 ? '…' : ''}」）。`);
+  if (/【[^】]+】/.test(title)) tparts.push(`【${(/【([^】]+)】/.exec(title) || [])[1]}】で、何の${F}か一目で分かるようにしている。`);
+  if (/[!！?？]/.test(title)) tparts.push('「！」「？」で驚きや問いかけを入れて、続きが気になる形にしている。');
+  if (/\d/.test(title)) tparts.push('数字（回数・時間・順位など）が入っていて、中身の規模が具体的に伝わる。');
+  hot.forEach(t => tparts.push(`今週「${t.w}」を含むVTuberの動画が${t.n}本あり、話題の言葉で検索・おすすめに乗りやすい。`));
+  R.push(['🏷', 'タイトルの作り', tparts.join('')]);
+  // 6. 企画のスタイル
+  styleOf(title).slice(0, 2).forEach(s => { const same = P.vs.filter(x => styleOf(x.title).includes(s)), md = median(same.map(x => x.ratio).filter(x => x != null));
+    R.push(['🎯', `企画スタイル：${s}`, ({ '参加型': '視聴者が一緒に遊べるので「見る」だけでなく「参加しに来る」理由がある。', 'コラボ': '相手のファンが流れ込んでくるので、登録者の外に広がりやすい。', '耐久': '「どこまで行くか見届けたい」気持ちで長く見られやすい。', '初見': '初見のリアクションは切り抜き・ショートの素材になりやすく、本編にも人が戻ってくる。' }[s] || 'よく使われている企画の形。')
+      + (same.length >= 5 && md ? `今週の${gName}${F}で「${s}」は${same.length}本あり、再生÷登録者の真ん中は×${md.toFixed(1)}（全体は×${(P.ratio || 0).toFixed(1)}）。` : '')]); });
+  // 7. 形式ならではの理由
+  if (v.fmt === 'short') R.push(['📱', `ショート（${v.dur || '?'}秒）`, `ショートはフィードで登録していない人にも次々と表示される形式。${P.dur ? `今週のショートの長さの真ん中は${Math.round(P.dur)}秒。` : ''}${v.dur && v.dur <= 30 ? '短いほど最後まで見られやすく、くり返し再生（ループ）もされやすい。' : ''}`]);
+  if (v.fmt === 'stream') {
+    const len = v.dur ? durText(v.dur) : null;
+    R.push(['🔴', v.live != null ? `配信中（同時接続 ${fmt(v.live)}人）` : `配信アーカイブ${len ? '（' + len + '）' : ''}`,
+      v.live != null ? `今まさに配信中で、同時接続${fmt(v.live)}人。登録者${fmt(v.subs)}人の${v.subs ? (v.live / v.subs * 100).toFixed(1) + '%' : ''}が今見ている計算。`
+      : `${len ? len + 'の配信が、' : ''}終わったあとのアーカイブで${fmt(v.views)}回見られている。${r != null && r >= 5 ? '登録者の何倍も見られている配信アーカイブは、切り抜きやSNSで話題になった場面から本編に人が来ている可能性が高い。' : ''}${v.dur && P.dur ? `今週の${F}の長さの真ん中は${durText(Math.round(P.dur))}。` : ''}`]);
+  }
+  // 8. 小さなチャンネルから伸びた例として
+  if (v.subs != null && v.subs < 10000 && v.views >= 10000) {
+    const smalls = PA.vs.filter(x => x.subs != null && x.subs < 10000), big = smalls.filter(x => x.views >= v.views).length;
+    R.push(['🌱', `登録者${fmt(v.subs)}人から${fmt(v.views)}回`, `今週集めた登録者1万人未満の${F}${smalls.length}本の中で、再生数${big + 1}位。登録者が少なくても、題材・タイトル・サムネが当たれば、登録者の外まで届く例です。まねするなら、上の「タイトルの作り」と、題材の選び方を参考にしてください。`]);
+  }
+  if (!R.length) R.push(['📊', '安定した再生', `同じ${gName}${F}の中で上位の再生数です。`]);
   return R;
 }
 
@@ -1674,9 +1744,10 @@ const GUIDE = [
     <h3 class="font-black mt-4 mb-1">ログイン</h3>
     <ul class="list-disc pl-5 space-y-1">
       <li>「Googleでログイン」を押して、自分のYouTubeチャンネルを持っているGoogleアカウントを選びます。インプレッション数・クリック率・同接・年齢層など、YouTube Studioと同じ数字が見られるようになります。</li>
-      <li>ログインはサイトを<b>直接開いたとき</b>だけできます（Wixの埋め込みの中ではGoogleが開けないため、案内が出ます）。</li>
+      <li>ログインは、サイトを直接開いたときも、Wixの埋め込みの中でもできます。埋め込みの中では、Googleのログインが小さな別の画面で開きます（ブロックされたら、アドレスバーの右から許可してください）。埋め込みの中のログインは約1時間で切れるので、切れたら「🔄 ログインをつなぎ直す」を押してください。</li>
       <li>ログインの情報と数字は<b>その端末のブラウザの中だけ</b>に保存され、ほかの人には見えません。約1時間で切れますが、マイチャンネルを開くと自動でつなぎ直します。やめたいときは「ログアウト」。</li>
-      <li>メンバーが増えたら「＋ アカウントを追加」から、それぞれが自分でログインして追加します。</li>
+      <li>「👤 マイチャンネル」を押すと、まずアカウントを選ぶ画面が出ます。ここで「アカウントを選ぶ」「アカウントを追加」「設定（並び順・消去）」ができます。</li>
+      <li>アカウントは<b>チャンネルのURL</b>だけでも追加できます（公開の数字だけ）。本人が<b>Googleでログイン</b>して追加すると、インプレッションや同接などすべての数字が見られます。</li>
       <li>インプレッション数とクリック率は、最初にログインしてから<b>1〜2日後</b>に見られるようになります（YouTubeが1日分ずつレポートを作るため）。</li></ul>
     <h3 class="font-black mt-4 mb-1">📋 総評</h3>
     <p>チャンネル全体の評価です。<b>まずここだけ → 今週からやること → 健康診断 → 点数の内訳 → くわしい理由</b>（入力した内容・投稿した内容・概要欄・説明欄・アイコン・サムネイル）の順に並んでいます。</p>
@@ -1856,7 +1927,12 @@ function openVideo(id) {
       ${stat('高評価率', v.views ? (v.likes / v.views * 100).toFixed(1) + '%' : '—')}${stat('コメント率', v.views ? (v.comments / v.views * 100).toFixed(2) + '%' : '—')}${stat(v.live != null ? '同時接続' : '長さ', v.live != null ? fmt(v.live) : durText(v.dur))}
     </div>
     <h3 class="font-black mb-2">🔎 伸びた理由・経緯</h3>
-    ${ai ? `<div class="bg-neon/5 border border-neon/30 rounded-xl p-3 mb-3"><div class="text-[10px] font-bold text-neon mb-1">AI分析（推定）</div><p class="text-sm leading-relaxed">${esc(ai)}</p></div>` : ''}
+    ${ai ? (typeof ai === 'string' ? `<div class="bg-neon/5 border border-neon/30 rounded-xl p-3 mb-3"><div class="text-[10px] font-bold text-neon mb-1">AI分析（推定）</div><p class="text-sm leading-relaxed">${esc(ai)}</p></div>`
+      : `<div class="bg-neon/5 border border-neon/30 rounded-xl p-3 mb-3"><div class="text-[10px] font-bold text-neon mb-1">🤖 AI分析（推定・検索で背景も確認）</div>
+        ${ai.sum ? `<p class="font-black text-[15px] leading-snug mb-2 word-break">${esc(ai.sum)}</p>` : ''}
+        <dl class="space-y-2 text-sm leading-relaxed">${[['🚪 入口（タイトル・サムネ）', ai.entry], ['🎬 中身・企画', ai.content], ['🗓 タイミング・背景', ai.timing], ['📊 数字から分かること', ai.numbers]].filter(x => x[1]).map(([k, t]) => `<div><dt class="text-xs font-bold">${k}</dt><dd class="word-break">${esc(t)}</dd></div>`).join('')}</dl>
+        ${ai.copy ? `<div class="mt-2 bg-lime/10 border border-lime/40 rounded-lg p-2"><div class="text-xs font-bold text-lime">🌱 まねするなら</div><p class="text-sm leading-relaxed word-break">${esc(ai.copy)}</p></div>` : ''}</div>`) : ''}
+    <div class="text-xs font-bold text-muted mb-1.5">📐 データから計算した理由</div>
     <ul class="space-y-2 mb-4">${ruleReasons(v).map(([ic, h, p]) => `<li class="flex gap-3 bg-void border border-line rounded-lg p-3"><span class="text-xl leading-none">${ic}</span><div class="min-w-0"><div class="font-bold text-sm">${esc(h)}</div><p class="text-xs text-ink/75 leading-relaxed mt-0.5">${esc(p)}</p></div></li>`).join('')}</ul>
     <div class="flex items-center justify-between gap-2 mb-4 bg-void border border-line rounded-lg p-3"><div class="text-xs text-muted">チャンネル登録者推移</div>${spark(subsHist(v), 120, 28)}</div>
     <h3 class="font-black mb-2">🔗 リンク</h3>
@@ -1873,13 +1949,85 @@ function openVideo(id) {
 const MY_CLIENT_ID = '416446480098-oacb0sng4rtk6oc1t5h8fn2ekial735t.apps.googleusercontent.com';
 const MY_SCOPES = 'https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/youtube.readonly';
 const MY_SEED = [{ cid:'UCLJVi4L9FiBmME6goRqOjVg', name:'サウレ', handle:'@saure_vtuber', th:'' }];
-const MY = { sel: null, days: 'all', tokens: {}, busy: '', err: '', view: 'review', cfmt: 'all' };
+const MY = { sel: null, days: 'all', tokens: {}, busy: '', err: '', view: 'home', cfmt: 'all' };
 // 端末に保存できない環境（プライベートモードなど）でも動くように、まず画面の中に持っておき、保存できれば端末にも保存
 const MYMEM = {};
 const myGet = (k, d) => k in MYMEM ? MYMEM[k] : (MYMEM[k] = store.get(k, d));
 const mySet = (k, v) => { MYMEM[k] = v; store.set(k, v); };
 const myAccts = () => myGet('vtb_my_accts', null) || MY_SEED.map(x => ({ ...x }));
 const myAcctsSet = a => mySet('vtb_my_accts', a);
+// 公開の数字：サンプル → 毎日の自動更新（members.json のメンバー）→ この端末でログイン中のアカウントを使って取ったもの、の順で探す
+const myPub = cid => MY_PUBLIC[cid] || (S.data && S.data.mypub && S.data.mypub[cid]) || myGet('vtb_my_pub_' + cid, null);
+const myLiveTok = () => Object.values(MY.tokens).find(t => t && t.exp > Date.now());
+const myAvatar = (a, cls = 'w-12 h-12') => { const th = a.th || (myPub(a.cid) || {}).th;
+  return th ? `<img src="${esc(th)}" class="${cls} rounded-full border border-line shrink-0" alt="">` : `<span class="${cls} rounded-full bg-gradient-to-br from-neon to-pink text-white grid place-items-center font-black shrink-0">${esc((a.name || '?')[0])}</span>`; };
+
+// ---- メイン画面：アカウント選択 → 追加（URL／ログイン）→ 設定（並び順・消去） ----
+function myHomeHtml() {
+  const accts = myAccts(), ago = t => new Date(t).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
+  const st = a => { const t = MY.tokens[a.cid], d = myCache(a.cid), p = myPub(a.cid);
+    return t && t.exp > Date.now() ? ['● ログイン中（すべての数字）', 'text-lime'] : d ? ['🔒 前回ログインした数字（' + ago(d.at) + '）', 'text-amber'] : p ? ['🔗 公開の数字で見られます' + (p.asOf ? '（' + p.asOf.slice(5).replace('-', '/') + '時点）' : ''), 'text-neon'] : ['数字はまだありません', 'text-muted']; };
+  const cards = accts.map(a => { const s = st(a);
+    return `<button class="text-left bg-panel border ${a.cid === MY.sel ? 'border-neon/60' : 'border-line'} rounded-2xl p-3 sm:p-4 clickable flex items-center gap-3 min-w-0" data-myopen="${esc(a.cid)}">
+      ${myAvatar(a)}<div class="min-w-0 flex-1"><div class="font-black truncate">${esc(a.name || a.cid)}</div><div class="text-[11px] text-muted truncate">${esc(a.handle || '')}</div><div class="text-[11px] font-bold ${s[1]} mt-0.5">${s[0]}</div></div>
+      <span class="text-neon font-bold text-sm shrink-0">開く →</span></button>`; }).join('');
+  const sec = (icon, t, sub, body) => `<section class="mb-6"><h3 class="font-black text-base mb-0.5">${icon} ${t}</h3><p class="text-[11px] text-muted mb-2">${sub}</p>${body}</section>`;
+  const row = (a, i) => { const live = MY.tokens[a.cid] && MY.tokens[a.cid].exp > Date.now();
+    return `<div class="flex items-center gap-2 py-2 ${i ? 'border-t border-line' : ''}">${myAvatar(a, 'w-8 h-8')}<span class="flex-1 min-w-0 text-sm font-bold truncate">${esc(a.name || a.cid)}</span>
+      <button class="border border-line rounded-lg w-8 h-8 font-bold disabled:opacity-30" data-mymove="${esc(a.cid)}:-1" ${i === 0 ? 'disabled' : ''} aria-label="上へ">↑</button>
+      <button class="border border-line rounded-lg w-8 h-8 font-bold disabled:opacity-30" data-mymove="${esc(a.cid)}:1" ${i === accts.length - 1 ? 'disabled' : ''} aria-label="下へ">↓</button>
+      ${live ? `<button class="text-[11px] text-muted underline px-1" data-mylogout="${esc(a.cid)}">ログアウト</button>` : ''}
+      <button class="border border-pink/50 text-pink rounded-lg px-2.5 h-8 text-xs font-bold" data-mydel="${esc(a.cid)}">消す</button></div>`; };
+  return (MY.busy ? `<div class="text-sm text-neon font-bold mb-3 animate-pulse">⏳ ${esc(MY.busy)}</div>` : '') + (MY.err ? `<div class="text-sm text-pink font-bold mb-3">⚠️ ${esc(MY.err)}</div>` : '')
+    + sec('👥', 'アカウントを選ぶ', '押すと、そのチャンネルの総評・コンテンツ別・数字・自己プロデュースが見られます', accts.length ? `<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">${cards}</div>` : '<p class="text-sm text-muted bg-panel border border-line rounded-xl p-3">まだアカウントがありません。下の「アカウントを追加」から追加してください。</p>')
+    + sec('＋', 'アカウントを追加', 'URLだけでも追加できます。本人がGoogleでログインすると、すべての数字が見られます', `<div class="grid md:grid-cols-2 gap-3">
+      <div class="bg-panel border border-line rounded-2xl p-3 sm:p-4"><div class="font-black text-sm">🔗 チャンネルのURLで追加</div>
+        <p class="text-[11px] text-muted mt-0.5 mb-2">見られるのは公開の数字（登録者・再生・高評価・投稿日時）。ログインなしでOK</p>
+        <form class="flex gap-2" onsubmit="event.preventDefault();myUrlAdd(this.u.value)"><input name="u" id="myUrlIn" type="url" inputmode="url" placeholder="https://www.youtube.com/@xxxx" class="flex-1 min-w-0 bg-void border border-line rounded-lg px-3 py-2 text-sm"><button class="bg-neon text-white rounded-lg px-4 py-2 text-sm font-bold shrink-0">追加</button></form>
+        <p class="text-[10px] text-muted mt-1.5">「youtube.com/@名前」と「youtube.com/channel/UC…」のどちらの形でもOK</p></div>
+      <div class="bg-panel border border-line rounded-2xl p-3 sm:p-4 flex flex-col"><div class="font-black text-sm">🔑 Googleでログインして追加</div>
+        <p class="text-[11px] text-muted mt-0.5 mb-2">インプレッション・クリック率・平均視聴率・同接・年齢層など、YouTube Studioと同じ数字がすべて見られます。チャンネルを持っているGoogleアカウントでログインしてください</p>
+        <button class="mt-auto bg-neon text-white rounded-lg px-4 py-2 text-sm font-bold" data-mylogin="new">Googleでログインして追加</button></div></div>`)
+    + (accts.length ? sec('⚙️', '設定', '並び順を変えたり、この端末の一覧から消したりできます（YouTubeのチャンネルには何も起きません）', `<div class="bg-panel border border-line rounded-2xl px-3 sm:px-4 py-1">${accts.map(row).join('')}</div>`) : '');
+}
+
+// ---- URLでアカウントを追加 ----
+async function myUrlAdd(raw) {
+  raw = (raw || '').trim(); MY.err = '';
+  let cid = (/(UC[\w-]{22})/.exec(raw) || [])[1] || null, handle = null;
+  if (!cid) { const m = /@([^\/?#\s]+)/.exec(raw); if (m) { try { handle = '@' + decodeURIComponent(m[1]); } catch (e) { handle = '@' + m[1]; } } }
+  if (!cid && !handle) { MY.err = 'URLの形が読み取れませんでした。YouTubeでチャンネルを開いたときのURL（youtube.com/@名前 など）を貼ってください'; return render(); }
+  const accts = myAccts(), same = h => h && handle && h.toLowerCase() === handle.toLowerCase();
+  // 分かっているチャンネルから探す（一覧・サンプル・毎日の自動更新）
+  if (!cid) { const hit = accts.find(a => same(a.handle)) || Object.entries({ ...((S.data && S.data.mypub) || {}), ...MY_PUBLIC }).map(([k, p]) => ({ cid: k, handle: p.handle })).find(p => same(p.handle)); if (hit) cid = hit.cid; }
+  let info = null; const tok = myLiveTok();
+  if (tok) { try { MY.busy = 'チャンネルを確認中…'; render();
+      const j = await myApi(tok, 'https://www.googleapis.com/youtube/v3/channels?part=snippet&' + (cid ? 'id=' + cid : 'forHandle=' + encodeURIComponent(handle)));
+      info = j.items && j.items[0]; if (info) cid = info.id; } catch (e) {} MY.busy = ''; }
+  if (!cid) { MY.err = tok ? 'このURLのチャンネルが見つかりませんでした。URLをもう一度確かめてください'
+      : '「@名前」の形のURLは、この端末でどれか1つのアカウントがログインしているときだけ読み取れます。チャンネルのページの「概要」→「チャンネルを共有」→「チャンネルIDをコピー」で出る UC から始まる形なら、ログインなしで追加できます'; return render(); }
+  if (accts.some(a => a.cid === cid)) { toast('このチャンネルはもう一覧にあります'); MY.sel = cid; MY.view = 'review'; return render(); }
+  const p = myPub(cid);
+  accts.push({ cid, name: info ? info.snippet.title : (p && p.name) || handle || cid, handle: info ? info.snippet.customUrl || handle || '' : (p && p.handle) || handle || '', th: info ? ((info.snippet.thumbnails || {}).default || {}).url || '' : (p && p.th) || '', via: 'url' });
+  myAcctsSet(accts); MY.sel = cid; mySet('vtb_my_sel', cid); MY.view = 'num'; toast('追加しました'); render();
+  myPubRefresh(cid);
+}
+// 公開の数字を取ってくる（サンプルや毎日の自動更新にないチャンネルだけ。この端末でログイン中のアカウントを使う。6時間に1回まで）
+async function myPubRefresh(cid) {
+  if (MY_PUBLIC[cid] || (S.data && S.data.mypub && S.data.mypub[cid])) return;
+  const tok = myLiveTok(), old = myGet('vtb_my_pub_' + cid, null); if (!tok || (old && Date.now() - old.got < 6 * 3600e3)) return;
+  try {
+    const cj = await myApi(tok, 'https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&id=' + cid), c = cj.items && cj.items[0]; if (!c) return;
+    const pl = await myApi(tok, 'https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=30&playlistId=UU' + cid.slice(2)).catch(() => ({}));
+    const ids = (pl.items || []).map(x => x.contentDetails.videoId);
+    const vj = ids.length ? await myApi(tok, 'https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,liveStreamingDetails,statistics&id=' + ids.join(',')) : {};
+    mySet('vtb_my_pub_' + cid, { got: Date.now(), asOf: myDate(new Date()), name: c.snippet.title, handle: c.snippet.customUrl || '', th: ((c.snippet.thumbnails || {}).default || {}).url || '', desc: c.snippet.description || '',
+      subs: c.statistics.hiddenSubscriberCount ? null : +c.statistics.subscriberCount, vcount: +c.statistics.videoCount || 0,
+      videos: (vj.items || []).filter(v => v.snippet.liveBroadcastContent === 'none').map(v => { const dur = isoDur(v.contentDetails.duration), live = v.liveStreamingDetails;
+        return { id: v.id, fmt: live ? 'stream' : dur <= 180 ? 'short' : 'video', title: v.snippet.title, at: (live && live.actualStartTime) || v.snippet.publishedAt, dur, views: +v.statistics.viewCount || 0, likes: v.statistics.likeCount != null ? +v.statistics.likeCount : null }; }) });
+    if (S.tab === 'my') render();
+  } catch (e) {}
+}
 const myCache = cid => myGet('vtb_my_data_' + cid, null);
 const myProf = cid => myGet('vtb_my_prof_' + cid, null) || { ...((MY_PUBLIC[cid] && MY_PUBLIC[cid].prof) || {}) };
 function myProfSave(el) { const cid = MY.sel, p = myProf(cid); p[el.dataset.myprof] = el.value; mySet('vtb_my_prof_' + cid, p); }
@@ -2613,6 +2761,19 @@ function myLogin(want, silent = false) {
   if (!MY_CLIENT_ID) return mySetupInfo();
   const inFrame = (() => { try { return window.top !== window.self; } catch (e) { return true; } })();
   const here = MY_LOGIN_SITES.find(s => location.href.startsWith(s));
+  // Wixなどに埋め込まれているとき：ページの移動はできないので、小さなGoogleのログイン画面（ポップアップ）で行う
+  if (inFrame && here && !silent) {
+    const go = () => { const auto = myGet('vtb_my_auto', null);
+      google.accounts.oauth2.initTokenClient({ client_id: MY_CLIENT_ID, scope: MY_SCOPES, include_granted_scopes: true,
+        // 前にログインした人がつなぎ直すときは、アカウントを選ぶ画面を出さない
+        prompt: want !== 'new' && auto && auto.cid === want ? '' : 'select_account',
+        callback: r => { if (r.error) { MY.err = r.error === 'access_denied' ? 'ログインがキャンセルされたか、許可されませんでした' : 'ログインできませんでした（' + r.error + '）'; render(); } else myAfterLogin(r, want); },
+        error_callback: e => { MY.err = e.type === 'popup_failed_to_open' ? 'ログインの小さな画面がブロックされました。ブラウザのアドレスバーの右に出る「ポップアップをブロックしました」から許可して、もう一度押してください' : e.type === 'popup_closed' ? 'ログインの画面が閉じられました。もう一度押してください' : 'ログインできませんでした（' + (e.type || e.message) + '）'; render(); } }).requestAccessToken(); };
+    if (window.google && google.accounts && google.accounts.oauth2) return go();
+    // 部品がまだ読み込めていないとき：読み込んでからすぐ開く（だめならもう一度押してもらう）
+    MY.busy = 'ログインの準備中…'; render();
+    return myLoadGis().then(() => { MY.busy = ''; render(); go(); }).catch(e => { MY.busy = ''; MY.err = e.message; render(); });
+  }
   // 登録してある場所以外（パソコンのファイルを直接開いたとき・Wixの埋め込みの中）ではログインできないので、案内を出す
   if (inFrame || !here) {
     if (location.protocol === 'file:') return openModal('このままではログインできません', `<p class="text-sm leading-relaxed mb-3">パソコンのファイルを直接開いたページ（file:///）からは、Googleの決まりでログインできません。<br>同じファイルを、下のアドレスで開き直してください（パソコンの中だけで動くサーバーで開きます）。</p>${linkBox('http://localhost:8765/#my', 'localhost で開く')}<p class="text-xs text-muted mt-3">公開しているサイト（${esc(MY_SITE)}）からもログインできます。</p>`);
@@ -2664,7 +2825,7 @@ async function myAfterLogin(r, want) {
     Object.assign(me, { name: ch.snippet.title, handle: ch.snippet.customUrl || '', th: (ch.snippet.thumbnails && (ch.snippet.thumbnails.default || {}).url) || '' });
     myAcctsSet(a);
     if (want && want !== 'new' && want !== cid) toast('別のチャンネル（' + ch.snippet.title + '）でログインしたので、そちらを追加しました');
-    MY.tokens[cid] = tok; MY.sel = cid; mySet('vtb_my_sel', cid);
+    MY.tokens[cid] = tok; MY.sel = cid; mySet('vtb_my_sel', cid); if (MY.view === 'home') MY.view = 'review';
     // ログインしっぱなしにするため、この端末に保存（次に開いたとき・切れたとき自動でつなぎ直す）
     mySet('vtb_my_tok_' + cid, tok); mySet('vtb_my_auto', { cid });
     try { sessionStorage.removeItem('vtb_my_silent_tried'); } catch (e) {}
@@ -2824,18 +2985,21 @@ function myCard(title, body, sub = '') { return `<div class="bg-panel border bor
 const MY_VIEWS = [['review', '📋 総評'], ['content', '🎬 コンテンツ別'], ['num', '📊 数字'], ['prof', '📝 自己プロデュース']];
 function renderMy() {
   const el = $('#view-my'), accts = myAccts();
+  // 埋め込み（Wix）の中では、ログインの小さな画面がブロックされないよう、Googleの部品を先に読み込んでおく
+  if (IN_FRAME && MY_CLIENT_ID) myLoadGis().catch(() => {});
   if (!MY.sel || !accts.some(a => a.cid === MY.sel)) MY.sel = (accts.find(a => a.cid === myGet('vtb_my_sel', '')) || accts[0] || {}).cid || null;
   const a = accts.find(x => x.cid === MY.sel);
-  const tabs = accts.map(x => { const th = x.th || (MY_PUBLIC[x.cid] && MY_PUBLIC[x.cid].th);
-    return `<button class="chip flex items-center gap-1.5 border border-line rounded-full pl-1 pr-3 py-1 text-xs font-bold bg-panel" data-myacct="${esc(x.cid)}" aria-pressed="${x.cid === MY.sel}">${th ? `<img src="${esc(th)}" class="w-6 h-6 rounded-full" alt="">` : `<span class="w-6 h-6 rounded-full bg-gradient-to-br from-neon to-pink text-white grid place-items-center text-[11px]">${esc((x.name || '?')[0])}</span>`}${esc(x.name || x.cid)}${MY.tokens[x.cid] ? ' <span class="text-lime">●</span>' : ''}</button>`; }).join('');
-  let h = `<div class="mb-2 flex flex-wrap items-baseline gap-x-2"><h2 class="text-lg sm:text-xl font-black">👤 マイチャンネル分析 <span class="text-[11px] align-middle font-bold text-pink border border-pink/40 bg-pink/10 rounded-full px-2 py-0.5">ベータ版</span></h2>
-    <span class="text-[10px] text-muted">ログインはこの端末の中だけで使い、ほかの人には見えません</span></div>
-    <div class="flex flex-wrap gap-2 mb-2">${tabs}<button class="border border-dashed border-neon/60 text-neon rounded-full px-3 py-1 text-xs font-bold" data-mylogin="new">＋ アカウントを追加</button></div>`;
-  if (!a) { el.innerHTML = h + '<p class="text-sm text-muted">「＋ アカウントを追加」からログインしてください。</p>'; return; }
+  const title = `<div class="mb-3 flex flex-wrap items-baseline gap-x-2"><h2 class="text-lg sm:text-xl font-black">👤 マイチャンネル分析 <span class="text-[11px] align-middle font-bold text-pink border border-pink/40 bg-pink/10 rounded-full px-2 py-0.5">ベータ版</span></h2>
+    <span class="text-[10px] text-muted">ログインはこの端末の中だけで使い、ほかの人には見えません</span></div>`;
+  // メイン画面（アカウント選択・追加・設定）
+  if (MY.view === 'home' || !a) { MY.view = 'home'; $$('.mytab').forEach(t => t.setAttribute('aria-selected', t.dataset.myview === 'home')); el.innerHTML = title + myHomeHtml(); return; }
+  // 開いているアカウント（押すとメイン画面に戻って切り替えられる）
+  let h = `<div class="flex items-center gap-2 mb-2 flex-wrap">${myAvatar(a, 'w-9 h-9')}<div class="min-w-0"><div class="font-black leading-tight">${esc(a.name || a.cid)}</div><div class="text-[10px] text-muted">${esc(a.handle || '')}</div></div>
+    <button class="ml-auto border border-line rounded-full px-3 py-1 text-xs font-bold bg-panel" data-myview="home">🔄 アカウントを切り替える</button></div>`;
   // 前にログインした人でログインが切れていたら、自動でつなぎ直す（Googleの画面に一瞬移動して戻ってくる）
   if (myAutoLogin()) { el.innerHTML = h + '<div class="text-sm text-neon font-bold animate-pulse">⏳ ログインをつなぎ直しています…</div>'; return; }
   const tok = MY.tokens[a.cid], live = tok && tok.exp > Date.now();
-  const d = myCache(a.cid), pub = MY_PUBLIC[a.cid];
+  const d = myCache(a.cid), pub = myPub(a.cid);
   // ログイン状態
   // ログイン状態：1行にまとめる（日数の切り替えは「📊 数字」のときだけ）
   const ago = d ? new Date(d.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
@@ -2844,9 +3008,8 @@ function renderMy() {
       <span class="flex-1"></span>${MY.view === 'num' ? [[7, '7日'], [28, '28日'], [90, '90日'], ['all', '全期間']].map(([n, l]) => `<button class="chip border border-line rounded-full px-2.5 py-0.5 font-bold" data-mydays="${n}" aria-pressed="${MY.days === n}">${l}</button>`).join('') : ''}
       <button class="border border-line rounded-full px-2.5 py-0.5 font-bold" data-myrefresh>🔄 取り直す</button>`
     : `<span class="font-bold text-amber">🔒 未ログイン</span><span class="text-muted flex-1 min-w-[140px]">${d ? '前回（' + ago + '）の数字' : pub ? '公開の数字だけで表示中' : ''}</span>
-      <button class="bg-neon text-white rounded-lg px-3 py-1.5 font-bold" data-mylogin="${esc(a.cid)}">Googleでログイン</button>`}
-    ${live ? `<button class="text-muted underline" data-mylogout="${esc(a.cid)}">ログアウト</button>` : ''}
-    <button class="text-muted underline" data-mydel="${esc(a.cid)}">端末から外す</button></div>`;
+      <button class="bg-neon text-white rounded-lg px-3 py-1.5 font-bold" data-mylogin="${esc(a.cid)}">${IN_FRAME && (myGet('vtb_my_auto', null) || {}).cid === a.cid ? '🔄 ログインをつなぎ直す' : 'Googleでログイン'}</button>`}
+    ${live ? `<button class="text-muted underline" data-mylogout="${esc(a.cid)}">ログアウト</button>` : ''}</div>`;
   if (MY.busy) h += `<div class="text-sm text-neon font-bold mb-3 animate-pulse">⏳ ${esc(MY.busy)}</div>`;
   if (MY.err) h += `<div class="text-sm text-pink font-bold mb-3">⚠️ ${esc(MY.err)}</div>`;
   if (MY.view === 'review') h += myReviewHtml(a.cid, d, pub);
@@ -3039,7 +3202,7 @@ function myDeepHtml(v, part = 'all') {
   return part === 'clips' ? clipsH : part === 'evidence' ? h : part === 'game' ? gameH : h + clipsH + gameH;
 }
 function openMyEval(id) {
-  const cid = MY.sel, d = myCache(cid), pub = MY_PUBLIC[cid], v = myVids(d, pub).find(x => x.id === id); if (!v) return;
+  const cid = MY.sel, d = myCache(cid), pub = myPub(cid), v = myVids(d, pub).find(x => x.id === id); if (!v) return;
   openModal('コンテンツの評価', myItemHtml(cid, v, d, pub));
 }
 
@@ -3074,7 +3237,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/6-11';
+const MY_VER = '11/6-14';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明' };
@@ -3227,7 +3390,7 @@ function myNumbersHtml(d) {
     const wAvg = [1, 2, 3, 4, 5, 6, 0].map(i => ['日月火水木金土'[i] + '曜日', wn[i] ? wd[i] / wn[i] : 0]);
     // 配信・ショート・動画を出した日（日本時間）に縦線の印
     const jday = t => new Date(Date.parse(t) + 9 * 3600e3).toISOString().slice(0, 10);
-    const posts = myVids(d, MY_PUBLIC[MY.sel]).filter(v => v.at && Date.parse(v.at));
+    const posts = myVids(d, myPub(MY.sel)).filter(v => v.at && Date.parse(v.at));
     const marks = []; days.forEach((x, i) => { const ps = posts.filter(v => jday(v.at) === x.day); if (ps.length) marks.push({ i, fmt: ps[0].fmt, title: x.day.slice(5).replace('-', '/') + '：' + ps.map(v => v.title).join(' ／ ') }); });
     const peakDay = days[vals.indexOf(Math.max(...vals))].day, peakPosts = posts.filter(v => jday(v.at) === peakDay);
     h += `<div id="my-g7">${myGroup('📈', '毎日の推移', '日ごとの変化と、よく見られている曜日')}</div>`;
@@ -3383,7 +3546,7 @@ async function openMyVideo(id) {
 
 // 依頼文（送ってもらった型＋VTrend Baseの知識）を作ってコピー
 async function myPrompt(vid) {
-  const cid = MY.sel, d = myCache(cid), pub = MY_PUBLIC[cid], p = myProf(cid);
+  const cid = MY.sel, d = myCache(cid), pub = myPub(cid), p = myProf(cid);
   const vids = (d && d.videos.length ? d.videos : pub ? pub.videos : []);
   const isRev = vid === 'review';  // 総評（チャンネル全体）用
   let v = isRev ? null : vids.find(x => x.id === vid) || vids[0];
@@ -3462,7 +3625,7 @@ function mySetupInfo() {
 }
 
 function myClick(t, d) {
-  if (d.mytab !== undefined) { S.tab = S.tab === 'my' ? 'trend' : 'my'; S.kopen = null; store.set('vtb_tab3', S.tab); render(); window.scrollTo(0, 0); return true; }
+  if (d.mytab !== undefined) { S.tab = S.tab === 'my' ? 'trend' : 'my'; S.kopen = null; if (S.tab === 'my') { MY.view = 'home'; MY.err = ''; } store.set('vtb_tab3', S.tab); render(); window.scrollTo(0, 0); return true; }
   if (d.myacct) { MY.sel = d.myacct; MY.err = ''; mySet('vtb_my_sel', d.myacct); render(); return true; }
   if (d.mylogin) { myLogin(d.mylogin); return true; }
   if (d.mydays) { MY.days = d.mydays === 'all' ? 'all' : +d.mydays; render(); if (MY.tokens[MY.sel]) myFetch(MY.sel); return true; }
@@ -3485,11 +3648,19 @@ function myClick(t, d) {
   if (d.myeval) { openMyEval(d.myeval); return true; }
   if (d.myprompt !== undefined) { myPrompt(d.myprompt); return true; }
   if (d.mylogout) { myLogout(d.mylogout); toast('ログアウトしました'); render(); return true; }
-  if (d.mydel) { myLogout(d.mydel);
-    if (!confirm('このアカウントをこの端末の一覧から外しますか？（YouTubeのチャンネルには何も起きません。保存した数字もこの端末から消えます）')) return true;
-    myAcctsSet(myAccts().filter(x => x.cid !== d.mydel)); delete MYMEM['vtb_my_data_' + d.mydel]; try { localStorage.removeItem('vtb_my_data_' + d.mydel); } catch (e) {}
-    delete MY.tokens[d.mydel]; MY.sel = null; render(); return true;
+  if (d.mydel) {
+    const nm = (myAccts().find(x => x.cid === d.mydel) || {}).name || 'このアカウント';
+    if (!confirm(`「${nm}」をこの端末の一覧から消しますか？\n（YouTubeのチャンネルには何も起きません。この端末に保存した数字・自己プロデュースの入力も消えます）`)) return true;
+    myLogout(d.mydel);
+    myAcctsSet(myAccts().filter(x => x.cid !== d.mydel));
+    ['data', 'pub', 'prof'].forEach(k => { delete MYMEM['vtb_my_' + k + '_' + d.mydel]; try { localStorage.removeItem('vtb_my_' + k + '_' + d.mydel); } catch (e) {} });
+    delete MY.tokens[d.mydel]; if (MY.sel === d.mydel) MY.sel = null; MY.view = 'home'; toast('消しました'); render(); return true;
   }
+  // メイン画面：アカウントを開く・並べ替え・URLで追加
+  if (d.myopen) { MY.sel = d.myopen; MY.err = ''; mySet('vtb_my_sel', d.myopen); MY.view = 'review'; render(); window.scrollTo(0, 0); myPubRefresh(d.myopen); return true; }
+  if (d.mymove) { const [cid, dir] = d.mymove.split(':'), a = myAccts(), i = a.findIndex(x => x.cid === cid), j = i + (+dir);
+    if (i >= 0 && j >= 0 && j < a.length) { [a[i], a[j]] = [a[j], a[i]]; myAcctsSet(a); render(); } return true; }
+  if (d.myurladd !== undefined) { myUrlAdd(($('#myUrlIn') || {}).value || ''); return true; }
   return false;
 }
 
@@ -3528,7 +3699,7 @@ $$('.tab:not(.mytab)').forEach(t => t.onclick = () => { S.tab = t.dataset.tab; S
 let qT; $('#q').addEventListener('input', e => { clearTimeout(qT); qT = setTimeout(() => { S.q = e.target.value.trim(); _titleIdx = null; S.chMore = 50; render(); }, 150); });
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-goto],[data-close],#mBack,[data-copy],[data-genre],[data-format],[data-cap],[data-kwsrc],[data-kwgenre],[data-kwformat],[data-kwperiod],[data-cttab],[data-arch],[data-archid],[data-more],[data-kcat],[data-tview],[data-chmore],[data-chan],[data-kback],[data-kopen],[data-tok],[data-clipview],[data-cliprange],[data-clipfmt],[data-clipch],[data-gmode],[data-ggenre],[data-cgenre],[data-game],[data-classic],[data-vid],[data-mytab],[data-myacct],[data-mylogin],[data-mydays],[data-myvid],[data-myprompt],[data-mydel],[data-myrefresh],[data-mysetup],[data-myview],[data-mycfmt],[data-myeval],[data-myrank],[data-myrefadd],[data-myrefdel],[data-mycper],[data-mylogout],[data-mymetric],[data-myvsort]');
+  const t = e.target.closest('[data-goto],[data-close],#mBack,[data-copy],[data-genre],[data-format],[data-cap],[data-kwsrc],[data-kwgenre],[data-kwformat],[data-kwperiod],[data-cttab],[data-arch],[data-archid],[data-more],[data-kcat],[data-tview],[data-chmore],[data-chan],[data-kback],[data-kopen],[data-tok],[data-clipview],[data-cliprange],[data-clipfmt],[data-clipch],[data-gmode],[data-ggenre],[data-cgenre],[data-game],[data-classic],[data-vid],[data-mytab],[data-myacct],[data-mylogin],[data-mydays],[data-myvid],[data-myprompt],[data-mydel],[data-myopen],[data-mymove],[data-myurladd],[data-myrefresh],[data-mysetup],[data-myview],[data-mycfmt],[data-myeval],[data-myrank],[data-myrefadd],[data-myrefdel],[data-mycper],[data-mylogout],[data-mymetric],[data-myvsort]');
   if (!t) return;
   const d = t.dataset;
   if (myClick(t, d)) return;

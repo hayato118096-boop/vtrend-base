@@ -755,6 +755,8 @@ async function gemini(parts, { search = false, tier = 'lite', lowMedia = false, 
 // =====================================================================
 const MY_CALLS = 10, MY_CHUNK = 1800, MY_DEADLINE = 40 * 60e3;
 const myDeep = (prev.my && typeof prev.my === 'object') ? prev.my : {};
+// メンバーの公開の数字（登録者・最近の動画の再生や高評価）。サイトでログインしていなくても見られるようにする
+const myPub = (prev.mypub && typeof prev.mypub === 'object') ? prev.mypub : {};
 const hms = s => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 3600)}:${String(Math.floor(s % 3600 / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
 const toSec = t => typeof t === 'number' ? t : String(t || '').split(':').reduce((a, x) => a * 60 + (+x || 0), 0);
 async function fetchChat(id) {
@@ -796,6 +798,16 @@ async function memberSteps() {
       const ids = (pl.items || []).map(x => x.contentDetails.videoId);
       if (!ids.length) continue;
       const vj = await yt('videos', { part: 'snippet,contentDetails,liveStreamingDetails,statistics', id: ids.join(',') }, 1);
+      // 公開の数字（チャンネル情報は1人1ユニット）
+      try {
+        const cj = await yt('channels', { part: 'snippet,statistics', id: m.cid }, 1), c = cj.items && cj.items[0];
+        if (c) myPub[m.cid] = { asOf: new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10), name: c.snippet.title, handle: c.snippet.customUrl || '',
+          th: ((c.snippet.thumbnails || {}).default || {}).url || '', desc: c.snippet.description || '',
+          subs: c.statistics.hiddenSubscriberCount ? null : +c.statistics.subscriberCount, vcount: +c.statistics.videoCount || 0,
+          videos: (vj.items || []).filter(v => v.snippet.liveBroadcastContent === 'none').map(v => { const dur = isoDur(v.contentDetails.duration), live = v.liveStreamingDetails;
+            return { id: v.id, fmt: live ? 'stream' : dur <= 180 ? 'short' : 'video', title: v.snippet.title, at: (live && live.actualStartTime) || v.snippet.publishedAt, dur,
+              views: +v.statistics.viewCount || 0, likes: v.statistics.likeCount != null ? +v.statistics.likeCount : null }; }) };
+      } catch (e) { logErr(`member channel ${m.name}`, e); }
       for (const v of vj.items || []) {
         const dur = isoDur(v.contentDetails.duration), live = v.liveStreamingDetails;
         if (v.snippet.liveBroadcastContent !== 'none' || dur < 600) continue; // 配信中・予定・10分未満は対象外
@@ -905,19 +917,43 @@ if (GEM) {
     const ids = new Set();
     for (const f of FORMATS) for (const p of ['7', 'new']) (pools[`${g.id}|${f.id}|${p}`] || []).forEach(id => ids.add(id));
     const top = [...ids].map(id => videos[id]).filter(v => v && v.subs && v.views >= 10000 && !isClip(v)).sort((a, b) => ratioOf(b) - ratioOf(a)).slice(0, 10);
-    top.forEach(v => { if (oldBuzz[v.id]) aiBuzz[v.id] = oldBuzz[v.id]; else buzzTodo.set(v.id, v); });
+    // くわしい形（オブジェクト）で書いたものだけ再利用。前の短い文（文字列）は、くわしく書き直す対象にする（新しい動画を優先）
+    top.forEach(v => { if (oldBuzz[v.id]) aiBuzz[v.id] = oldBuzz[v.id]; if (!oldBuzz[v.id] || typeof oldBuzz[v.id] === 'string') buzzTodo.set(v.id, v); });
   }
   if (buzzTodo.size) {
-    const lines = [...buzzTodo.values()].map(v => `${v.id} | ${v.title} | ${v.ch} | 登録者${v.subs} | 再生${v.views} | 公開から${Math.max(1, Math.round((now - Date.parse(v.published)) / 864e5))}日 | 高評価${v.likes} | コメント${v.comments} | ${v.stream ? '配信アーカイブ' : fmtOf(v) === 'short' ? 'ショート' : '動画'}`).join('\n');
-    try {
-      const { data } = await gemini([{ text:
-        'あなたはVTuber・YouTubeのアナリストです。次の動画それぞれについて、タイトル・数字から考えられる「伸びた理由と経緯」を日本語で2〜3文で書いてください。' +
-        '事実として分からないことは「〜と考えられる」と推測であることを明記し、誇張しないでください。すべての動画について書いてください。' +
-        '出力はJSON配列 [{"id":"動画ID","reason":"理由"}] のみ。\n\n' + lines }], { tier: 'high' });
-      for (const x of data || []) if (x && x.id && x.reason) aiBuzz[x.id] = x.reason;
-      console.log(`OK   gemini buzz: ${buzzTodo.size}本を1回で作成`);
-    } catch (e) { logErr('gemini buzz', e); }
-    await sleep(7000);
+    // 比べるための数字：同じ形式の「再生÷登録者」の中央値、同じチャンネルのほかの動画の再生の中央値
+    const med = a => { const s = a.filter(x => x != null && isFinite(x)).sort((x, y) => x - y); return s.length ? s[s.length >> 1] : null; };
+    const all = Object.values(videos).filter(x => !isClip(x));
+    const fmtMed = {}; for (const f of ['video', 'short', 'stream']) fmtMed[f] = med(all.filter(x => fmtOf(x) === f).map(ratioOf));
+    const jst = t => { const d = new Date(Date.parse(t) + 9 * 3600e3); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${'日月火水木金土'[d.getUTCDay()]}) ${d.getUTCHours()}:${String(d.getUTCMinutes()).padStart(2, '0')}`; };
+    const line = v => { const f = fmtOf(v), mine = all.filter(x => x.chId === v.chId && x.id !== v.id && fmtOf(x) === f);
+      return `${v.id} | ${v.title} | ${v.ch} | ${f === 'stream' ? '配信アーカイブ' : f === 'short' ? 'ショート' : '動画'} | 長さ${Math.round((v.dur || 0) / 60)}分 | 公開 ${jst(v.published)}（${Math.max(1, Math.round((now - Date.parse(v.published)) / 864e5))}日前） | 登録者${v.subs} | 再生${v.views}（登録者の${ratioOf(v).toFixed(1)}倍。同じ形式の真ん中は${(fmtMed[f] || 0).toFixed(1)}倍） | 高評価${v.likes}（${(v.likes / Math.max(v.views, 1) * 100).toFixed(1)}%） | コメント${v.comments}`
+        + (mine.length ? ` | 同じチャンネルの同じ形式${mine.length}本の再生の真ん中${med(mine.map(x => x.views))}` : ''); };
+    // 1回12本まで・1日2回まで（無料枠のため）。新しく入った動画を先に
+    const order = [...buzzTodo.values()].sort((a, b) => (typeof oldBuzz[a.id] === 'string') - (typeof oldBuzz[b.id] === 'string'));
+    for (let i = 0; i < Math.min(order.length, 24); i += 12) {
+      const batch = order.slice(i, i + 12);
+      try {
+        const { data } = await gemini([{ text:
+          'あなたはVTuber・YouTubeのアナリストです。次の動画それぞれについて「なぜ伸びたのか」を、小さなVTuberがまねできるくらい具体的に分析してください。' +
+          'Google検索で、その動画・ゲーム・企画・出来事（発売日、アップデート、大会、話題になった出来事、コラボ相手など）の背景を確かめてから書いてください。' +
+          '決まり文句（「おすすめに載った」「企画の力」だけ）は禁止。必ず、タイトルの具体的な言葉・数字（登録者・再生・比べた倍率・公開日時・長さ）・検索で分かった背景を根拠として名指しで書くこと。' +
+          '分からないことは「〜と考えられる」と推測であることを明記し、誇張しないでください。すべての動画について書いてください。\n' +
+          '出力はJSON配列のみ（説明文やコードブロックは不要）：[{"id":"動画ID",' +
+          '"sum":"ひとことで（40文字以内）",' +
+          '"entry":"入口：タイトル・サムネで何が効いているか（タイトルのどの言葉か、なぜ押したくなるか。2〜3文）",' +
+          '"content":"中身・企画：何をした回で、どこが見られる理由か（2〜3文）",' +
+          '"timing":"タイミング・背景：時期・流行・出来事・相手との関係など、検索で分かったこと（2〜3文。なければ空文字）",' +
+          '"numbers":"数字から分かること：倍率・反応率・同じチャンネルのほかの回との差から言えること（2文）",' +
+          '"copy":"小さなVTuberがまねするなら：具体的な企画・タイトルの例（1〜2文）"}]\n\n' + batch.map(line).join('\n') }], { tier: 'high', search: true });
+        let n = 0;
+        for (const x of Array.isArray(data) ? data : []) if (x && x.id && (x.sum || x.entry)) {
+          aiBuzz[x.id] = { sum: String(x.sum || '').slice(0, 80), entry: String(x.entry || '').slice(0, 400), content: String(x.content || '').slice(0, 400),
+            timing: String(x.timing || '').slice(0, 400), numbers: String(x.numbers || '').slice(0, 300), copy: String(x.copy || '').slice(0, 300) }; n++; }
+        console.log(`OK   gemini buzz: ${n}/${batch.length}本をくわしく作成`);
+      } catch (e) { logErr('gemini buzz', e); }
+      await sleep(7000);
+    }
   }
 
   // C-2. 話題ワードの流行理由（ジャンルごと上位20語）→ アーカイブにも保存
@@ -1108,7 +1144,7 @@ const out = {
   pools, videos, histDays, subs, tokens, tokens2, tokHist, archive,
   suggest: suggestOut, gtrends, aiBuzz, aiTok, notes, steam, classic, chans, chv, chtop,
   // メンバーの配信の映像分析（マイチャンネル用）
-  my: myDeep,
+  my: myDeep, mypub: myPub,
   // AIの精査結果（今のデータに出てくる動画の分だけ残す）
   aiv: Object.fromEntries(Object.entries(aiv).filter(([id]) => videos[id])),
   // AIトレンド分析（最新＋過去14日分）
