@@ -2041,7 +2041,7 @@ async function myPubRefresh(cid) {
     mySet('vtb_my_pub_' + cid, { got: Date.now(), asOf: myDate(new Date()), name: c.snippet.title, handle: c.snippet.customUrl || '', th: ((c.snippet.thumbnails || {}).default || {}).url || '', desc: c.snippet.description || '',
       subs: c.statistics.hiddenSubscriberCount ? null : +c.statistics.subscriberCount, vcount: +c.statistics.videoCount || 0,
       videos: (vj.items || []).filter(v => v.snippet.liveBroadcastContent === 'none').map(v => { const dur = isoDur(v.contentDetails.duration), live = v.liveStreamingDetails;
-        return { id: v.id, fmt: live ? 'stream' : dur <= 180 ? 'short' : 'video', title: v.snippet.title, at: (live && live.actualStartTime) || v.snippet.publishedAt, dur, views: +v.statistics.viewCount || 0, likes: v.statistics.likeCount != null ? +v.statistics.likeCount : null }; }) });
+        return { id: v.id, fmt: myFmtGuess(live, dur), title: v.snippet.title, at: (live && live.actualStartTime) || v.snippet.publishedAt, dur, views: +v.statistics.viewCount || 0, likes: v.statistics.likeCount != null ? +v.statistics.likeCount : null }; }) });
     if (S.tab === 'my') render();
   } catch (e) {}
 }
@@ -2934,7 +2934,7 @@ async function myKeep() {
   } finally { _keepBusy = false; }
 }
 // 前に取った数字が3時間より古ければ、取り直す
-function myFetchIfOld(cid) { const d = myCache(cid), t = MY.tokens[cid]; if (t && t.exp > Date.now() && !MY.busy && (!d || Date.now() - d.at > 3 * 3600e3)) myFetch(cid); }
+function myFetchIfOld(cid) { const d = myCache(cid), t = MY.tokens[cid]; if (t && t.exp > Date.now() && !MY.busy && (!d || !d.ctype || Date.now() - d.at > 3 * 3600e3)) myFetch(cid); }
 // 保管庫から、自己プロデュースの入力と、AIの総評を読む（どの端末でも同じ内容にする）
 const _profTimer = {};
 async function myVaultPull(cid) {
@@ -3043,15 +3043,21 @@ async function myFetch(cid) {
     age: R({ dimensions: 'ageGroup,gender', metrics: 'viewerPercentage' }),
     sub: R({ dimensions: 'subscribedStatus', metrics: 'views,estimatedMinutesWatched' }),
     vid: R({ dimensions: 'video', metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,likes,comments,shares', sort: '-views', maxResults: 30 }),
+    // YouTube自身の分類（配信・ショート・動画）。長さやライブの記録から推測すると、プレミア公開や短い動画を間違えるため
+    ctLive: R({ dimensions: 'video', metrics: 'views', filters: 'creatorContentType==liveStream', sort: '-views', maxResults: 200 }),
+    ctShort: R({ dimensions: 'video', metrics: 'views', filters: 'creatorContentType==shorts', sort: '-views', maxResults: 200 }),
+    ctVod: R({ dimensions: 'video', metrics: 'views', filters: 'creatorContentType==videoOnDemand', sort: '-views', maxResults: 200 }),
   };
   const keys = Object.keys(jobs), res = await Promise.allSettled(Object.values(jobs)), g = {}, errs = [];
-  keys.forEach((k, i) => res[i].status === 'fulfilled' ? g[k] = res[i].value : errs.push(k + '：' + res[i].reason.message));
+  keys.forEach((k, i) => res[i].status === 'fulfilled' ? g[k] = res[i].value : /^ct/.test(k) ? null : errs.push(k + '：' + res[i].reason.message));
+  // 動画ID → 形式（YouTube自身の分類）
+  const ctype = {}; [['ctVod', 'video'], ['ctShort', 'short'], ['ctLive', 'stream']].forEach(([k, f]) => { if (g[k]) myRows(g[k]).forEach(r => { ctype[r.video] = f; }); });
   const one = j => j ? (myRows(j)[0] || {}) : null;
   const d = { cid, days, all, at: Date.now(), range: [myDate(start), myDate(end)], errs,
     tot: one(g.tot), prev: one(g.prev), daily: g.day ? myRows(g.day) : [], fmt: g.fmt ? myRows(g.fmt) : [],
     src: g.src ? myRows(g.src) : [], age: g.age ? myRows(g.age) : [], sub: g.sub ? myRows(g.sub) : [], videos: [],
     kw: g.kw ? myRows(g.kw) : [], rel: g.rel ? myRows(g.rel) : [], ext: g.ext ? myRows(g.ext) : [],
-    dev: g.dev ? myRows(g.dev) : [], geo: g.geo ? myRows(g.geo) : [], loc: g.loc ? myRows(g.loc) : [], shr: g.shr ? myRows(g.shr) : [] };
+    dev: g.dev ? myRows(g.dev) : [], geo: g.geo ? myRows(g.geo) : [], loc: g.loc ? myRows(g.loc) : [], shr: g.shr ? myRows(g.shr) : [], ctype };
   // 関連動画（どの動画のおすすめから来たか）のタイトルを付ける
   if (d.rel.length) { try { const j = await myApi(tok, 'https://www.googleapis.com/youtube/v3/videos?part=snippet&id=' + d.rel.map(r => r.insightTrafficSourceDetail).join(','));
     const t = Object.fromEntries((j.items || []).map(x => [x.id, { title: x.snippet.title, ch: x.snippet.channelTitle, own: x.snippet.channelId === cid }]));
@@ -3069,7 +3075,7 @@ async function myFetch(cid) {
       d.videos = vr.map(v => { const x = info[v.video]; const dur = x ? isoDur(x.contentDetails.duration) : 0;
         const priv = x && x.status ? x.status.privacyStatus : 'public', title = x ? x.snippet.title : v.video;
         return { id: v.video, title, at: x ? (x.liveStreamingDetails && x.liveStreamingDetails.actualStartTime) || x.snippet.publishedAt : '',
-          fmt: x && x.liveStreamingDetails ? 'stream' : dur && dur <= 180 ? 'short' : 'video', dur, views: v.views, min: v.estimatedMinutesWatched, avd: v.averageViewDuration, avp: v.averageViewPercentage,
+          fmt: ctype[v.video] || myFmtGuess(x && x.liveStreamingDetails, dur), dur, views: v.views, min: v.estimatedMinutesWatched, avd: v.averageViewDuration, avp: v.averageViewPercentage,
           subs: v.subscribersGained, likes: v.likes, comments: v.comments, shares: v.shares, priv: x ? priv : 'gone', mem: MEM.test(title) }; })
         .filter(v => v.priv !== 'gone' && v.priv !== 'private' && (v.priv !== 'unlisted' || v.mem));  // gone＝削除済み
     } catch (e) { errs.push('動画の情報：' + e.message); }
@@ -3139,7 +3145,13 @@ function myBase(fmtId, genre) {
 
 // ---- 画面 ----
 const MY_FMT = { stream:'🔴 配信', short:'📱 ショート', video:'🎬 動画' };
-const MY_CT = { SHORTS:'📱 ショート', LIVE_STREAM:'🔴 配信', VIDEO_ON_DEMAND:'🎬 動画', STORY:'ストーリー', UNSPECIFIED:'その他' };
+const MY_CT = { SHORTS:'📱 ショート', LIVE_STREAM:'🔴 配信', VIDEO_ON_DEMAND:'🎬 動画', STORY:'ストーリー', UNSPECIFIED:'その他',
+  // YouTubeアナリティクスは実際には次の名前で返してくる
+  shorts:'📱 ショート', liveStream:'🔴 配信', videoOnDemand:'🎬 動画', story:'ストーリー', posts:'📝 投稿（コミュニティ）', unspecified:'その他' };
+// アナリティクスの形式名 → サイトの形式（配信・ショート・動画）
+const MY_CT2F = { liveStream: 'stream', LIVE_STREAM: 'stream', shorts: 'short', SHORTS: 'short', videoOnDemand: 'video', VIDEO_ON_DEMAND: 'video' };
+// YouTubeの分類が分からないときの推測：プレミア公開（歌ってみたなど）にも「ライブの記録」が付くので、10分未満は配信にしない
+const myFmtGuess = (live, dur) => live && !(dur > 0 && dur < 600) ? 'stream' : dur > 0 && dur <= 180 ? 'short' : 'video';
 const MY_SRC = { SUBSCRIBER:'ホーム・登録チャンネル', SHORTS:'ショートのフィード', RELATED_VIDEO:'関連動画（おすすめ）', YT_SEARCH:'YouTube検索', YT_CHANNEL:'チャンネルページ', NOTIFICATION:'通知', EXT_URL:'外部サイト（Xなど）', PLAYLIST:'再生リスト', YT_PLAYLIST_PAGE:'再生リストのページ', YT_OTHER_PAGE:'YouTubeのその他のページ', NO_LINK_OTHER:'直接・不明', END_SCREEN:'終了画面', HASHTAGS:'ハッシュタグ', LIVE_REDIRECT:'ライブのリダイレクト', ANNOTATION:'カード', CAMPAIGN_CARD:'キャンペーン', ADVERTISING:'広告', PROMOTED:'宣伝', SOUND_PAGE:'サウンドのページ', VIDEO_REMIXES:'リミックス', NO_LINK_EMBEDDED:'埋め込み', PRODUCT_PAGE:'商品ページ', SHORTS_CONTENT_LINKS:'ショートのリンク', IMMERSIVE_LIVE:'ライブのフィード' };
 const myPct = (a, b) => b ? (a / b * 100) : null;
 const myF1 = x => x == null || isNaN(x) ? '—' : (+x).toFixed(1);
@@ -3210,11 +3222,13 @@ const myGood = (ok, bad, todo, ask) => (ok && ok.length ? `<div class="text-xs f
 const myVids = (d, pub) => {
   const out = (d && d.videos || []).slice();
   // 毎日の自動更新で見つけた新しい配信・動画（サンプルの一覧にないもの）を先頭に足す
-  const auto = Object.entries((S.data && S.data.my) || {}).filter(([, x]) => x.cid === MY.sel && x.title).map(([id, x]) => ({ id, fmt: x.stream ? 'stream' : 'video', title: x.title, at: x.at, dur: x.dur, views: x.views, likes: x.likes }))
+  const auto = Object.entries((S.data && S.data.my) || {}).filter(([, x]) => x.cid === MY.sel && x.title).map(([id, x]) => ({ id, fmt: myFmtGuess(x.stream, x.dur), title: x.title, at: x.at, dur: x.dur, views: x.views, likes: x.likes }))
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   auto.forEach(v => { if (!out.some(x => x.id === v.id) && !(pub && pub.videos.some(x => x.id === v.id))) out.push(v); });
-  (pub ? pub.videos : []).forEach(v => { if (!out.some(x => x.id === v.id)) out.push(v); });
-  return out;
+  (pub ? pub.videos : []).forEach(v => { if (!out.some(x => x.id === v.id)) out.push({ ...v, fmt: v.fmt === 'stream' ? myFmtGuess(true, v.dur) : v.fmt }); });
+  // ログインして取ったYouTube自身の分類があれば、それを正とする（公開の数字・自動更新の分も直す）
+  const ct = (d && d.ctype) || {};
+  return out.map(v => ct[v.id] && ct[v.id] !== v.fmt ? { ...v, fmt: ct[v.id] } : v);
 };
 
 // ---- 総評（チャンネル全体：入力した内容・投稿した内容・概要欄・説明欄・アイコン・サムネイル） ----
@@ -3420,7 +3434,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-6';
+const MY_VER = '11/11-7';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明' };
@@ -3453,6 +3467,7 @@ function myHealthItems(d) {
   else items.push({ step: '押してもらう', k: 'クリック率', v: '準備中', lv: null, aim: '平均は4〜5%。初めてログインしてから1〜2日後に出ます', low: '', know: 'k3' });
   // ② 見続けてもらえているか（形式ごとの平均視聴率）
   const AVP = { SHORTS: [50, 80, '最後まで見られて当たり前の長さ。80%超えが目標（ループされると100%を超える）', '最初の1秒に一番面白い場面を置く・45秒前後にまとめる', 'k5'], VIDEO_ON_DEMAND: [30, 45, '10〜15分の動画なら50%超えが目標。40%を切ったら構成を見直す', '冒頭30秒で「この動画で何が分かるか」を言う・間延びする所を切る', 'k2'], LIVE_STREAM: [8, 15, '長い配信は低くなるのが普通。自分の前の配信と比べる', '最初の1分でゴールを言う・1時間ごとに「今どこ」をまとめる・2時間前後に区切る', 'k40'] };
+  AVP.shorts = AVP.SHORTS; AVP.videoOnDemand = AVP.VIDEO_ON_DEMAND; AVP.liveStream = AVP.LIVE_STREAM;   // アナリティクスが返す名前でも引けるように
   (d.fmt || []).filter(x => x.views > 0 && AVP[x.creatorContentType]).forEach(x => { const a = AVP[x.creatorContentType];
     items.push({ step: '見続けてもらう', k: '平均視聴率（' + (MY_CT[x.creatorContentType] || '').replace(/^\S+ /, '') + '）', v: myF1(x.averageViewPercentage) + '%', lv: L(x.averageViewPercentage, a[0], a[1]), aim: a[2], low: a[3], know: a[4] }); });
   // ③ 反応してもらえているか（高評価率：VTrend Baseの小規模VTuberの中央値と比べる）
