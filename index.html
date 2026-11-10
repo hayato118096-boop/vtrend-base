@@ -2886,6 +2886,8 @@ async function myApi(tok, url, opt = {}) {
 }
 // ---- 保管庫（ずっとログイン・自己プロデュースの共有・AIの総評） ----
 const mySid = cid => MY_VAULT ? myGet('vtb_my_sid_' + cid, null) : null;
+// 自分でログインするアカウントか（URLだけで追加したほかの人のチャンネルは、ログインできないので案内の対象外）
+const myOwnAcct = cid => { const a = myAccts().find(x => x.cid === cid); return !!a && a.via !== 'url'; };
 async function myVault(req) {
   const r = await fetch(MY_VAULT, { method: 'POST', body: JSON.stringify(req) });   // 送る形は text/plain（事前確認なしで送れる形）
   const j = await r.json().catch(() => ({ error: '保管庫の返事が読めませんでした（' + r.status + '）' }));
@@ -3217,6 +3219,11 @@ function myReviewHtml(cid, d, pub) {
     : MY.evErr && MY.sel === cid ? `<div class="text-[11px] text-amber mb-3"><b>⚠️ 今日の総評は作れませんでした。${ev ? '前の総評を出しています。' : ''}</b><br>${esc(MY.evErr)}</div>`
     : MY_VAULT && !mySid(cid) && !(E && E.auto) ? `<div class="text-[11px] text-muted mb-3">💡 Googleでログインすると、AIが毎日1回、最新の数字で総評を書き直します。</div>`
     : MY_VAULT && mySid(cid) && !live ? `<div class="text-[11px] text-muted mb-3">⏳ ログインをつないで数字を取ったあと、その日の総評がまだならAIが書き直します。</div>` : '';
+  // 保管庫があるのにこの端末でまだログインしていないときは、古い見本は出さずにログインを案内する（ほかの端末と同じ最新の総評はログインすると出る）
+  if (MY_VAULT && !mySid(cid) && !(E && E.auto) && myOwnAcct(cid)) return `<div class="bg-panel border border-amber/50 rounded-2xl p-4 sm:p-5 glow mb-4">
+    <div class="font-black text-base">🔒 この端末では、まだログインしていません</div>
+    <p class="text-sm leading-relaxed mt-2">AIの総評と自己プロデュースは保管庫に入っていて、ログインすると<b>ほかの端末と同じ最新の内容</b>が出ます。ログインは端末ごとに最初の1回だけで、そのあとはずっとログインしたままです。</p>
+    <button class="mt-3 bg-neon text-white rounded-lg px-4 py-2.5 text-sm font-bold" data-mylogin="${esc(cid)}">Googleでログイン</button></div>`;
   if (!ev) return note + myCard('📋 総評', `<p class="text-xs text-muted mb-2">総評はまだありません。${MY_VAULT ? 'Googleでログインすると、AIが自動で書きます。' : '「📝 自己プロデュース」を書いてから、依頼文をAIに貼り付けると総評をもらえます。'}</p>${btn}`);
   const sc = ev.score, vids = myVids(d, pub);
   const imgRow = ([ids, cap]) => `<div class="mt-2"><div class="flex gap-1.5 overflow-x-auto no-scrollbar">${ids.map(id => `<img src="https://i.ytimg.com/vi/${id}/mqdefault.jpg" class="h-16 sm:h-20 rounded-md border border-line shrink-0 clickable" alt="" data-myeval="${id}">`).join('')}</div><div class="text-[10px] text-muted mt-0.5">${esc(cap)}</div></div>`;
@@ -3405,7 +3412,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-2';
+const MY_VER = '11/11-3';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明' };
@@ -3610,6 +3617,11 @@ const MY_PF = [
   ], ''],
 ];
 function myProfHtml(cid) {
+  // この端末でまだログインしていないときは、見本や古い入力を出さずにログインを案内（入力の食い違いを防ぐ）
+  if (MY_VAULT && !mySid(cid) && myOwnAcct(cid)) return `<div class="bg-panel border border-amber/50 rounded-2xl p-4 sm:p-5 glow mb-4">
+    <div class="font-black text-base">🔒 この端末では、まだログインしていません</div>
+    <p class="text-sm leading-relaxed mt-2">自己プロデュースの入力は保管庫に入っていて、ログインすると<b>ほかの端末で入力した内容がそのまま</b>出ます。ログインは端末ごとに最初の1回だけです。</p>
+    <button class="mt-3 bg-neon text-white rounded-lg px-4 py-2.5 text-sm font-bold" data-mylogin="${esc(cid)}">Googleでログイン</button></div>`;
   const p = myProf(cid), all = MY_PF.flatMap(g => g[1]), done = all.filter(([k]) => (p[k] || '').trim()).length;
   const f = ([k, l, ph]) => `<label class="block text-xs font-bold mt-2">${l}${(p[k] || '').trim() ? '' : ' <span class="text-amber font-normal">未記入</span>'}<textarea data-myprof="${k}" rows="2" class="mt-1 w-full bg-void border border-line rounded-lg p-2 text-xs font-normal" placeholder="${esc(ph)}">${esc(p[k] || '')}</textarea></label>`;
   return `<div class="bg-panel border border-line rounded-xl p-3 sm:p-4 glow mb-4">
