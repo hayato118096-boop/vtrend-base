@@ -2887,6 +2887,9 @@ async function myApi(tok, url, opt = {}) {
 // ---- 保管庫（ずっとログイン・自己プロデュースの共有・AIの総評） ----
 const mySid = cid => MY_VAULT ? myGet('vtb_my_sid_' + cid, null) : null;
 // 自分でログインするアカウントか（URLだけで追加したほかの人のチャンネルは、ログインできないので案内の対象外）
+// 入力が、最初に入れておいた見本のままか（見本の項目と同じ内容しか入っていない）
+const myIsSample = (cid, p) => { const s = (MY_PUBLIC[cid] && MY_PUBLIC[cid].prof) || {}; if (!p || !Object.keys(s).length) return false;
+  return Object.entries(p).every(([k, v]) => Array.isArray(v) ? !v.length : !String(v || '').trim() || v === s[k]); };
 const myOwnAcct = cid => { const a = myAccts().find(x => x.cid === cid); return !!a && a.via !== 'url'; };
 async function myVault(req) {
   const r = await fetch(MY_VAULT, { method: 'POST', body: JSON.stringify(req) });   // 送る形は text/plain（事前確認なしで送れる形）
@@ -2942,11 +2945,11 @@ async function myVaultPull(cid) {
     const local = myGet('vtb_my_prof_' + cid, null), synced = myGet('vtb_my_profsrv_' + cid, 0);
     if (r.prof && r.prof.prof) {
       if (JSON.stringify(local) !== JSON.stringify(r.prof.prof)) {
-        if (local && !synced) {
+        if (local && !synced && !myIsSample(cid, local)) {
           // この端末で、保管庫とつながる前に入力した内容がある：勝手に上書きせず、どちらを使うか選んでもらう
           MY.profConflict = MY.profConflict || {}; MY.profConflict[cid] = { server: r.prof }; changed = true;
         } else {
-          if (local) mySet('vtb_my_prof_bak_' + cid, local);   // 念のため、この端末にあった内容を控えておく
+          if (local && !myIsSample(cid, local)) mySet('vtb_my_prof_bak_' + cid, local);   // 念のため、この端末にあった内容を控えておく（見本のままなら控えない）
           mySet('vtb_my_prof_' + cid, r.prof.prof); mySet('vtb_my_profsrv_' + cid, r.prof.at); changed = true;
         }
       } else mySet('vtb_my_profsrv_' + cid, r.prof.at);
@@ -3417,7 +3420,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-5';
+const MY_VER = '11/11-6';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明' };
@@ -3641,7 +3644,7 @@ function myProfHtml(cid) {
     </div></div>` : '';
   // 前にこの端末にあった入力（保管庫の内容で上書きしたときの控え）に戻せる
   const bak = myGet('vtb_my_prof_bak_' + cid, null), cur = myGet('vtb_my_prof_' + cid, null);
-  const restore = !cf && bak && JSON.stringify(bak) !== JSON.stringify(cur) && Object.values(bak).some(v => Array.isArray(v) ? v.length : String(v || '').trim()) ? `<div class="bg-panel border border-neon/50 rounded-2xl p-3 sm:p-4 mb-4">
+  const restore = !cf && bak && !myIsSample(cid, bak) && JSON.stringify(bak) !== JSON.stringify(cur) && Object.values(bak).some(v => Array.isArray(v) ? v.length : String(v || '').trim()) ? `<div class="bg-panel border border-neon/50 rounded-2xl p-3 sm:p-4 mb-4">
     <div class="font-black text-sm">🕘 前にこの端末で入力していた内容が残っています</div>
     <div class="mt-1.5">${brief(bak)}</div>
     <div class="flex flex-wrap gap-2 mt-2"><button class="bg-neon text-white rounded-lg px-3 py-2 text-xs font-bold" data-myprofuse="bak">この内容に戻す（保管庫にも入れる）</button><button class="text-xs text-muted underline px-2" data-myprofuse="bakdel">いらない（控えを消す）</button></div></div>` : '';
