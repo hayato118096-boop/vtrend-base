@@ -141,10 +141,10 @@ const ago = d => {
   return rtf.format(Math.round(s/86400/30), 'month');
 };
 const ytSearchUrl = q => 'https://www.youtube.com/results?search_query=' + encodeURIComponent(q);
-// リンクを押して開けるかどうか：スマホ・タブレットは開く。PCも、サイトを直接開いているとき（公開サイト・localhost）は開く。
-// PCで Wix の埋め込みの中から見ているときだけ、リンクがブロックされるのでコピー方式にする
+// リンクは、スマホでもPCでも、Wixの埋め込みの中でも「押したら開く」にする。
+// 埋め込みの中で新しいタブがブロックされたときだけ、代わりにURLをコピーして知らせる（下の a[target=_blank] のクリック処理）
 const IN_FRAME = (() => { try { return window.top !== window.self; } catch (e) { return true; } })();
-const TOUCH = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || !IN_FRAME;
+const TOUCH = true;
 function toast(msg) {
   const t = $('#toast'); t.textContent = msg; t.style.opacity = 1;
   clearTimeout(toast._t); toast._t = setTimeout(() => t.style.opacity = 0, 1800);
@@ -1948,6 +1948,9 @@ function openVideo(id) {
 // Google Cloud で作る「OAuth クライアントID」（公開してよい値。秘密の値ではない）。空のあいだはログインが準備中になる
 const MY_CLIENT_ID = '416446480098-oacb0sng4rtk6oc1t5h8fn2ekial735t.apps.googleusercontent.com';
 const MY_SCOPES = 'https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/youtube.readonly';
+// 保管庫（Google Apps Script のウェブアプリ）のアドレス。入っていると「ずっとログイン」「自己プロデュースをどの端末でも同じに」「AIの総評を1日1回自動で更新」が動く
+// 作り方は vault/Code.gs の先頭に書いてあります。空のときは今までどおり（ログインは約1時間・入力はこの端末だけ）
+const MY_VAULT = '';
 const MY_SEED = [{ cid:'UCLJVi4L9FiBmME6goRqOjVg', name:'サウレ', handle:'@saure_vtuber', th:'' }];
 const MY = { sel: null, days: 'all', tokens: {}, busy: '', err: '', view: 'home', cfmt: 'all' };
 // 端末に保存できない環境（プライベートモードなど）でも動くように、まず画面の中に持っておき、保存できれば端末にも保存
@@ -2043,7 +2046,7 @@ async function myPubRefresh(cid) {
 }
 const myCache = cid => myGet('vtb_my_data_' + cid, null);
 const myProf = cid => myGet('vtb_my_prof_' + cid, null) || { ...((MY_PUBLIC[cid] && MY_PUBLIC[cid].prof) || {}) };
-function myProfSave(el) { const cid = MY.sel, p = myProf(cid); p[el.dataset.myprof] = el.value; mySet('vtb_my_prof_' + cid, p); }
+function myProfSave(el) { const cid = MY.sel, p = myProf(cid); p[el.dataset.myprof] = el.value; mySet('vtb_my_prof_' + cid, p); myProfPush(cid); }
 
 // ---- ログイン前に見せる「公開されている数字」（サウレさんの実際のチャンネル・11/6時点） ----
 const MY_PUBLIC = {
@@ -2770,10 +2773,19 @@ const MY_SITE = 'https://hayato118096-boop.github.io/vtrend-base/';
 // ログインできる場所（Googleに登録してあるアドレス）：公開サイトと、パソコンの中で開くときの http://localhost:8765/
 const MY_LOGIN_SITES = [MY_SITE, 'http://localhost:8765/'];
 // silent=true：前にログインしたことがある人を、画面を出さずにGoogleで確認してログインし直す（ログインしっぱなしにするため）
-function myLogin(want, silent = false) {
+function myLogin(want, silent = false, consent = false) {
   if (!MY_CLIENT_ID) return mySetupInfo();
   const inFrame = (() => { try { return window.top !== window.self; } catch (e) { return true; } })();
   const here = MY_LOGIN_SITES.find(s => location.href.startsWith(s));
+  // 保管庫があるとき：Wixの埋め込みの中は小さなログイン画面で「ずっとログイン用」の確認コードをもらう
+  if (MY_VAULT && inFrame && here && !silent) {
+    const go = () => google.accounts.oauth2.initCodeClient({ client_id: MY_CLIENT_ID, scope: MY_SCOPES, include_granted_scopes: true, ux_mode: 'popup', select_account: true,
+      callback: r => { if (r.error || !r.code) { MY.err = r.error === 'access_denied' ? 'ログインがキャンセルされたか、許可されませんでした' : 'ログインできませんでした（' + (r.error || '確認コードなし') + '）'; render(); } else myVaultLogin(r.code, 'postmessage', want); },
+      error_callback: e => { MY.err = e.type === 'popup_failed_to_open' ? 'ログインの小さな画面がブロックされました。ブラウザのアドレスバーの右に出る「ポップアップをブロックしました」から許可して、もう一度押してください' : e.type === 'popup_closed' ? 'ログインの画面が閉じられました。もう一度押してください' : 'ログインできませんでした（' + (e.type || e.message) + '）'; render(); } }).requestCode();
+    if (window.google && google.accounts && google.accounts.oauth2) return go();
+    MY.busy = 'ログインの準備中…'; render();
+    return myLoadGis().then(() => { MY.busy = ''; render(); go(); }).catch(e => { MY.busy = ''; MY.err = e.message; render(); });
+  }
   // Wixなどに埋め込まれているとき：ページの移動はできないので、小さなGoogleのログイン画面（ポップアップ）で行う
   if (inFrame && here && !silent) {
     const go = () => { const auto = myGet('vtb_my_auto', null);
@@ -2796,18 +2808,22 @@ function myLogin(want, silent = false) {
   // 戻ってきたときに、見ていた画面（アカウントとタブ）に戻せるよう覚えておく
   try { sessionStorage.setItem('vtb_my_login', JSON.stringify({ state, want, silent, sel: MY.sel, view: MY.view })); } catch (e) {}
   const q = { client_id: MY_CLIENT_ID, redirect_uri: here, response_type: 'token', scope: MY_SCOPES, include_granted_scopes: 'true', state, prompt: silent ? 'none' : 'select_account' };
+  // 保管庫があるとき：「ずっとログイン用」の確認コードをもらう（初めての端末では許可の画面が出ることがあります）
+  if (MY_VAULT && !silent) Object.assign(q, { response_type: 'code', access_type: 'offline', prompt: consent ? 'consent select_account' : 'select_account' });
   const auto = myGet('vtb_my_auto', null); if (auto && auto.email) q.login_hint = auto.email;
   location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams(q);
 }
 // ログインの情報はこの端末のブラウザに保存（約1時間有効）。読み込み直してもログインしたまま
 function myLoadTokens() { myAccts().forEach(a => { const t = myGet('vtb_my_tok_' + a.cid, null); if (t && t.exp > Date.now()) MY.tokens[a.cid] = t; }); }
-function myLogout(cid) { delete MY.tokens[cid]; try { localStorage.removeItem('vtb_my_tok_' + cid); } catch (e) {} delete MYMEM['vtb_my_tok_' + cid]; const a = myGet('vtb_my_auto', null); if (a && a.cid === cid) mySet('vtb_my_auto', null); }
+function myLogout(cid) { const sid = mySid(cid); if (sid) { myVault({ op: 'logout', sid }).catch(() => {}); mySet('vtb_my_sid_' + cid, null); } delete MY.tokens[cid]; try { localStorage.removeItem('vtb_my_tok_' + cid); } catch (e) {} delete MYMEM['vtb_my_tok_' + cid]; const a = myGet('vtb_my_auto', null); if (a && a.cid === cid) mySet('vtb_my_auto', null); }
 // マイチャンネルを開いたとき、前にログインした人で、ログインが切れていたら自動でつなぎ直す（1回の表示につき1回だけ試す）
 function myAutoLogin() {
   const auto = myGet('vtb_my_auto', null); if (!auto || !auto.cid) return false;
   const t = MY.tokens[auto.cid]; if (t && t.exp > Date.now()) return false;
   // つなぎ直すのは、前にログインしたアカウントを開いたときだけ（URLで追加した別のアカウントを見ているときはしない）
   if (MY.sel !== auto.cid) return false;
+  // 保管庫でログインしているときは、Googleの画面に移動せずに保管庫から新しい鍵をもらう
+  if (mySid(auto.cid)) { myKeep(); return false; }
   if (IN_FRAME || !MY_LOGIN_SITES.some(s => location.href.startsWith(s))) return false;
   try { if (sessionStorage.getItem('vtb_my_silent_tried')) return false; sessionStorage.setItem('vtb_my_silent_tried', '1'); } catch (e) { return false; }
   MY.busy = 'ログインをつなぎ直しています…'; myLogin(auto.cid, true); return true;
@@ -2815,6 +2831,18 @@ function myAutoLogin() {
 // Googleから戻ってきたとき：アドレスの # のあとに付いてくるログインの情報を読み取り、すぐにアドレスから消す
 let myPending = null;
 (function myReadHash() {
+  // 保管庫を使うログイン：Googleから「?code=…」が付いて戻ってくる
+  const qs = new URLSearchParams(location.search);
+  if (qs.get('state') && (qs.get('code') || qs.get('error'))) {
+    history.replaceState(null, '', location.pathname);
+    let saved = null; try { saved = JSON.parse(sessionStorage.getItem('vtb_my_login') || 'null'); sessionStorage.removeItem('vtb_my_login'); } catch (e) {}
+    S.tab = 'my';
+    if (saved && saved.view && saved.view !== 'home' && saved.sel) { MY.sel = saved.sel; MY.view = saved.view; }
+    if (qs.get('error')) { MY.err = qs.get('error') === 'access_denied' ? 'ログインがキャンセルされたか、許可されませんでした' : 'ログインできませんでした（' + qs.get('error') + '）'; return; }
+    if (!saved || saved.state !== qs.get('state')) { MY.err = 'ログインの確認に失敗しました。もう一度ログインしてください'; return; }
+    myPending = { code: qs.get('code'), redirect: MY_LOGIN_SITES.find(s => location.href.startsWith(s)) || MY_SITE, want: saved.want };
+    return;
+  }
   const h = location.hash || '';
   if (h === '#my') { S.tab = 'my'; history.replaceState(null, '', location.pathname + location.search); return; }
   if (!/access_token=|error=/.test(h)) return;
@@ -2855,6 +2883,121 @@ async function myApi(tok, url, opt = {}) {
   if (!r.ok) throw new Error((j.error && j.error.message) || ('エラー ' + r.status));
   return j;
 }
+// ---- 保管庫（ずっとログイン・自己プロデュースの共有・AIの総評） ----
+const mySid = cid => MY_VAULT ? myGet('vtb_my_sid_' + cid, null) : null;
+async function myVault(req) {
+  const r = await fetch(MY_VAULT, { method: 'POST', body: JSON.stringify(req) });   // 送る形は text/plain（事前確認なしで送れる形）
+  const j = await r.json().catch(() => ({ error: '保管庫の返事が読めませんでした（' + r.status + '）' }));
+  if (j.error === 'need_login' && req.cid) mySet('vtb_my_sid_' + req.cid, null);
+  return j;
+}
+// ログイン：Googleの確認コードを保管庫に渡して、「ずっとログイン用」の合言葉（sid）と1時間の鍵をもらう
+async function myVaultLogin(code, redirect, want) {
+  MY.err = ''; MY.busy = 'ログインを確認中…'; render();
+  try {
+    const r = await myVault({ op: 'login', code, redirect });
+    if (r.need === 'consent') {
+      // 更新用の鍵がもらえなかった：許可の画面を出してもう一度（埋め込みの中ではできないので案内）
+      MY.busy = '';
+      if (redirect === 'postmessage') { MY.err = '最初の1回だけ、サイトを直接開いてログインしてください（Googleの許可の画面が必要です）。そのあとはこの埋め込みでもログインしたままになります'; return render(); }
+      return myLogin(want, false, true);
+    }
+    if (r.error) throw new Error(r.error);
+    mySet('vtb_my_sid_' + r.cid, r.sid);
+    await myAfterLogin({ access_token: r.access_token, expires_in: r.expires_in }, want);
+    myVaultPull(r.cid);
+  } catch (e) { MY.busy = ''; MY.err = e.message; render(); }
+}
+// 鍵が切れる前に、保管庫から新しい鍵をもらう（4分ごと・画面に戻ってきたとき）
+let _keepBusy = false;
+async function myKeep() {
+  if (!MY_VAULT || _keepBusy) return; _keepBusy = true;
+  try {
+    for (const a of myAccts()) {
+      const sid = mySid(a.cid); if (!sid) continue;
+      const t = MY.tokens[a.cid], had = t && t.exp > Date.now(); if (t && t.exp > Date.now() + 6 * 60e3) continue;
+      try {
+        const r = await myVault({ op: 'token', sid, cid: a.cid });
+        if (r.need === 'login') { mySet('vtb_my_sid_' + a.cid, null); if (a.cid === MY.sel) MY.err = 'Googleの許可が取り消されたため、ログインが切れました。もう一度ログインしてください'; if (S.tab === 'my') render(); continue; }
+        if (!r.access_token) continue;
+        const tok = { t: r.access_token, exp: Date.now() + (r.expires_in || 3600) * 1000 - 60e3 };
+        MY.tokens[a.cid] = tok; mySet('vtb_my_tok_' + a.cid, tok); mySet('vtb_my_auto', { cid: a.cid });
+        if (!had && S.tab === 'my') { render(); if (a.cid === MY.sel && MY.view !== 'home') myFetchIfOld(a.cid); }
+      } catch (e) {}
+    }
+  } finally { _keepBusy = false; }
+}
+// 前に取った数字が3時間より古ければ、取り直す
+function myFetchIfOld(cid) { const d = myCache(cid), t = MY.tokens[cid]; if (t && t.exp > Date.now() && !MY.busy && (!d || Date.now() - d.at > 3 * 3600e3)) myFetch(cid); }
+// 保管庫から、自己プロデュースの入力と、AIの総評を読む（どの端末でも同じ内容にする）
+const _profTimer = {};
+async function myVaultPull(cid) {
+  const sid = mySid(cid); if (!sid || _profTimer[cid]) return;
+  try {
+    const r = await myVault({ op: 'pull', sid, cid }); if (r.error || _profTimer[cid]) return;
+    let changed = false;
+    const local = myGet('vtb_my_prof_' + cid, null);
+    if (r.prof && r.prof.prof) {
+      if (JSON.stringify(local) !== JSON.stringify(r.prof.prof)) {
+        if (local) mySet('vtb_my_prof_bak_' + cid, local);   // 念のため、この端末にあった内容を控えておく
+        mySet('vtb_my_prof_' + cid, r.prof.prof); changed = true;
+      }
+    } else if (local) myProfPush(cid, 0);   // 保管庫がまだ空なら、この端末の入力を預ける
+    const ev = myGet('vtb_my_eval_' + cid, null);
+    if (r.eval && r.eval.review && (!ev || ev.at !== r.eval.at)) { mySet('vtb_my_eval_' + cid, r.eval); changed = true; }
+    const typing = document.activeElement && document.activeElement.matches && document.activeElement.matches('[data-myprof],[data-myref]');
+    if (changed && S.tab === 'my' && MY.sel === cid && !typing) render();
+  } catch (e) {}
+}
+// 入力したら、少し待ってから保管庫に保存
+function myProfPush(cid, delay = 1200) {
+  if (!mySid(cid)) return;
+  clearTimeout(_profTimer[cid]); MY.sync = 'saving'; mySyncShow();
+  _profTimer[cid] = setTimeout(async () => {
+    try { const r = await myVault({ op: 'prof', sid: mySid(cid), cid, prof: myGet('vtb_my_prof_' + cid, {}) }); if (r.error) throw new Error(r.error); MY.sync = 'saved'; }
+    catch (e) { MY.sync = 'error'; }
+    delete _profTimer[cid]; mySyncShow();
+  }, delay);
+}
+const MY_SYNC = { saving: ['⏳ 保存中…', 'text-muted'], saved: ['☁️ 保存しました（どの端末でも同じ内容）', 'text-lime'], error: ['⚠️ 保存できませんでした（この端末には残っています。少しあとでもう一度入力してください）', 'text-pink'] };
+function mySyncShow() { const el = $('#mySync'); if (!el) return; const s = MY_SYNC[MY.sync]; el.className = 'text-[10px] font-bold ' + (s ? s[1] : 'text-muted'); el.textContent = s ? s[0] : ''; }
+
+// AIの総評：保管庫の「自動の総評」があればそれ、なければ見本
+const MY_REV_PARTS = ['入力した内容（自己プロデュース）', '投稿した内容', '概要欄・説明欄', 'アイコン', 'サムネイル'];
+const MY_REV_SECS = [['1. 入力した内容（自己プロデュース）', '📝'], ['2. チャンネルに投稿した内容', '🎬'], ['3. 概要欄（チャンネルの説明）', '📄'], ['4. 説明欄（動画ごとの説明）', '🧾'], ['5. アイコン', '🙂', 'avatar'], ['6. サムネイルのデザイン', '🖼']];
+function myEvalFix(r) {
+  const A = x => (Array.isArray(x) ? x : x ? [x] : []).map(s => typeof s === 'string' ? s : s && (s.text || s.t) || '').map(s => String(s).trim()).filter(Boolean).slice(0, 12);
+  const pts = (Array.isArray(r.parts) ? r.parts : []).map(p => Math.max(0, Math.min(20, Math.round(+(Array.isArray(p) ? p[1] : p) || 0))));
+  const parts = MY_REV_PARTS.map((n, i) => [n, pts[i] || 0, 20]);
+  const secs = MY_REV_SECS.map(([t, icon, img], i) => { const s = (r.secs || [])[i] || {}; return { t, icon, img, ok: A(s.ok), gap: A(s.gap), todo: A(s.todo), ask: A(s.ask) }; });
+  const th = (Array.isArray(r.thumbs) ? r.thumbs : []).map(x => [A(x && x.ids).filter(id => /^[\w-]{11}$/.test(id)).slice(0, 6), String((x && x.cap) || '')]).filter(x => x[0].length).slice(0, 3);
+  if (th.length) secs[5].imgs = th;
+  return { score: parts.reduce((s, p) => s + p[1], 0), parts, first: A(r.first).slice(0, 3), secs, next: A(r.next).slice(0, 7), know: A(r.know).filter(id => KNOW.some(k => k.id === id)).slice(0, 8) };
+}
+function myEvalOf(cid) {
+  const v = myGet('vtb_my_eval_' + cid, null);
+  if (v && v.review) { try { return { made: v.made, review: myEvalFix(v.review), auto: true, model: v.model, by: '入力した自己プロデュース、ログインして取った数字（再生・インプレッション・クリック率・視聴率・流入元・年齢層など）、投稿したコンテンツ、概要欄、説明欄、アイコン、サムネイル、VTrend Baseのナレッジ' }; } catch (e) {} }
+  const s = MY_EVAL[cid];
+  return s ? { made: s.made, review: s.review, auto: false, by: s.by } : null;
+}
+// 総評を開いたとき、その日の総評がまだなら、AIに作ってもらう（1日1回。ログイン中で、数字を取ったあと）
+const _evTried = {};
+async function myEvalAuto(cid) {
+  if (!MY_VAULT || !mySid(cid) || MY.evBusy) return;
+  const t = MY.tokens[cid], d = myCache(cid); if (!t || t.exp <= Date.now() || !d || !d.tot || MY.busy) return;
+  const today = myDate(new Date()), cur = myGet('vtb_my_eval_' + cid, null);
+  if ((cur && cur.made === today) || _evTried[cid] === today) return;
+  _evTried[cid] = today; MY.evBusy = cid; MY.evErr = ''; render();
+  try {
+    const p = await myPromptText('review', true);
+    const r = await myVault({ op: 'eval', sid: mySid(cid), cid, prompt: p.text, images: p.images });
+    if (r.eval && r.eval.review) mySet('vtb_my_eval_' + cid, r.eval);
+    if (r.busy) MY.evErr = 'ほかの端末で今、総評を作っています。少しあとで開き直すと出ます';
+    else if (r.error) MY.evErr = r.error + (r.errs && r.errs.length ? '（' + r.errs.join('／') + '）' : '');
+  } catch (e) { MY.evErr = e.message; }
+  MY.evBusy = ''; if (S.tab === 'my') render();
+}
+
 const myDate = d => new Date(d.getTime() + 9 * 3600e3).toISOString().slice(0, 10);
 function myRows(j) { const h = (j.columnHeaders || []).map(c => c.name); return (j.rows || []).map(r => Object.fromEntries(h.map((k, i) => [k, r[i]]))); }
 
@@ -3007,7 +3150,7 @@ function renderMy() {
   if (!MY.sel || !accts.some(a => a.cid === MY.sel)) MY.sel = (accts.find(a => a.cid === myGet('vtb_my_sel', '')) || accts[0] || {}).cid || null;
   const a = accts.find(x => x.cid === MY.sel);
   const title = `<div class="mb-3 flex flex-wrap items-baseline gap-x-2"><h2 class="text-lg sm:text-xl font-black">👤 マイチャンネル分析 <span class="text-[11px] align-middle font-bold text-pink border border-pink/40 bg-pink/10 rounded-full px-2 py-0.5">ベータ版</span></h2>
-    <span class="text-[10px] text-muted">ログインはこの端末の中だけで使い、ほかの人には見えません</span></div>`;
+    <span class="text-[10px] text-muted">${MY_VAULT ? '一度ログインすると、ログアウトするまでログインしたままです。ほかの人には見えません' : 'ログインはこの端末の中だけで使い、ほかの人には見えません'}</span></div>`;
   // メイン画面（アカウント選択・追加・設定）
   if (MY.view === 'home' || !a) { MY.view = 'home'; $$('.mytab').forEach(t => t.setAttribute('aria-selected', t.dataset.myview === 'home')); el.innerHTML = title + myHomeHtml(); return; }
   // 開いているアカウント（押すとメイン画面に戻って切り替えられる）
@@ -3024,12 +3167,13 @@ function renderMy() {
     ${live ? `<span class="text-lime font-bold" title="切れても自動でつなぎ直します">● ログイン中</span>${d ? `<span class="text-muted">${ago} 取得</span>` : ''}
       <span class="flex-1"></span>${MY.view === 'num' ? [[7, '7日'], [28, '28日'], [90, '90日'], ['all', '全期間']].map(([n, l]) => `<button class="chip border border-line rounded-full px-2.5 py-0.5 font-bold" data-mydays="${n}" aria-pressed="${MY.days === n}">${l}</button>`).join('') : ''}
       <button class="border border-line rounded-full px-2.5 py-0.5 font-bold" data-myrefresh>🔄 取り直す</button>`
+    : mySid(a.cid) ? `<span class="font-bold text-neon animate-pulse">⏳ ログインをつないでいます…</span><span class="text-muted flex-1 min-w-[140px]">${d ? '前回（' + ago + '）の数字' : ''}</span>`
     : `<span class="font-bold text-amber">🔒 未ログイン</span><span class="text-muted flex-1 min-w-[140px]">${d ? '前回（' + ago + '）の数字' : pub ? '公開の数字だけで表示中' : ''}</span>
       <button class="bg-neon text-white rounded-lg px-3 py-1.5 font-bold" data-mylogin="${esc(a.cid)}">${IN_FRAME && (myGet('vtb_my_auto', null) || {}).cid === a.cid ? '🔄 ログインをつなぎ直す' : 'Googleでログイン'}</button>`}
     ${live ? `<button class="text-muted underline" data-mylogout="${esc(a.cid)}">ログアウト</button>` : ''}</div>`;
   if (MY.busy) h += `<div class="text-sm text-neon font-bold mb-3 animate-pulse">⏳ ${esc(MY.busy)}</div>`;
   if (MY.err) h += `<div class="text-sm text-pink font-bold mb-3">⚠️ ${esc(MY.err)}</div>`;
-  if (MY.view === 'review') h += myReviewHtml(a.cid, d, pub);
+  if (MY.view === 'review') { h += myReviewHtml(a.cid, d, pub); setTimeout(() => myEvalAuto(a.cid), 0); }
   else if (MY.view === 'content') h += myContentHtml(a.cid, d, pub);
   else if (MY.view === 'prof') h += myProfHtml(a.cid);
   else {
@@ -3064,9 +3208,15 @@ const myVids = (d, pub) => {
 
 // ---- 総評（チャンネル全体：入力した内容・投稿した内容・概要欄・説明欄・アイコン・サムネイル） ----
 function myReviewHtml(cid, d, pub) {
-  const ev = MY_EVAL[cid] && MY_EVAL[cid].review;
+  const E = myEvalOf(cid), ev = E && E.review;
   const btn = `<button class="border border-neon/60 text-neon rounded-lg px-3 py-2 text-xs font-bold" data-myprompt="review">📋 総評のAI依頼文を作る</button>`;
-  if (!ev) return myCard('📋 総評', `<p class="text-xs text-muted mb-2">総評はまだありません。「📝 自己プロデュース」を書いてから、依頼文をAIに貼り付けると総評をもらえます（自動でAIが書く仕組みは準備中）。</p>${btn}`);
+  // AIが今日の総評を書いている途中・作れなかったとき
+  const live = MY.tokens[cid] && MY.tokens[cid].exp > Date.now();
+  const note = MY.evBusy === cid ? `<div class="text-sm text-neon font-bold mb-3 animate-pulse">🤖 AIが最新の数字で今日の総評を書いています（1〜2分かかります）…</div>`
+    : MY.evErr && MY.sel === cid ? `<div class="text-[11px] text-amber mb-3"><b>⚠️ 今日の総評は作れませんでした。${ev ? '前の総評を出しています。' : ''}</b><br>${esc(MY.evErr)}</div>`
+    : MY_VAULT && !mySid(cid) && !(E && E.auto) ? `<div class="text-[11px] text-muted mb-3">💡 Googleでログインすると、AIが毎日1回、最新の数字で総評を書き直します。</div>`
+    : MY_VAULT && mySid(cid) && !live ? `<div class="text-[11px] text-muted mb-3">⏳ ログインをつないで数字を取ったあと、その日の総評がまだならAIが書き直します。</div>` : '';
+  if (!ev) return note + myCard('📋 総評', `<p class="text-xs text-muted mb-2">総評はまだありません。${MY_VAULT ? 'Googleでログインすると、AIが自動で書きます。' : '「📝 自己プロデュース」を書いてから、依頼文をAIに貼り付けると総評をもらえます。'}</p>${btn}`);
   const sc = ev.score, vids = myVids(d, pub);
   const imgRow = ([ids, cap]) => `<div class="mt-2"><div class="flex gap-1.5 overflow-x-auto no-scrollbar">${ids.map(id => `<img src="https://i.ytimg.com/vi/${id}/mqdefault.jpg" class="h-16 sm:h-20 rounded-md border border-line shrink-0 clickable" alt="" data-myeval="${id}">`).join('')}</div><div class="text-[10px] text-muted mt-0.5">${esc(cap)}</div></div>`;
   // 見出しに「良い・ふつう・要改善」の印（点数の内訳の点で決める。健康診断と同じ色）
@@ -3076,10 +3226,10 @@ function myReviewHtml(cid, d, pub) {
   const secs = ev.secs.map((s, i) => myDet(`${s.icon} ${esc(s.t)}${secTag(s)}`,
     (s.img === 'avatar' && pub && pub.th ? `<img src="${esc(pub.th)}" class="w-20 h-20 rounded-full border border-line mb-2" alt="アイコン">` : '')
     + myGood(s.ok, s.gap, s.todo, s.ask) + (s.imgs || []).map(imgRow).join(''), i === 0)).join('');
-  return `<div class="bg-panel border border-neon/40 rounded-2xl p-4 sm:p-5 glow mb-4">
+  return note + `<div class="bg-panel border border-neon/40 rounded-2xl p-4 sm:p-5 glow mb-4">
     <div class="flex items-center gap-4 flex-wrap">
       <div class="text-center shrink-0"><div class="text-[10px] text-muted">チャンネルの総評</div><div class="text-5xl font-black font-mono ${myScoreCol(sc)}">${sc}</div><div class="text-[10px] text-muted">/100点</div></div>
-      <div class="flex-1 min-w-[200px] text-[11px] text-muted">🤖 AIの総評（サンプル・${esc(MY_EVAL[cid].made)}）<br>入力した内容・投稿した${vids.length}本・概要欄・説明欄・アイコン・サムネイルを見て評価しています</div>
+      <div class="flex-1 min-w-[200px] text-[11px] text-muted">🤖 AIの総評（${E.auto ? '自動・' + esc(E.made.slice(5).replace('-', '/')) + 'に作成' : 'サンプル・' + esc(E.made)}）<br>入力した内容・投稿した${vids.length}本・概要欄・説明欄・アイコン・サムネイルを見て評価しています</div>
     </div>
     <div class="mt-3 bg-neon/5 border border-neon/30 rounded-xl p-3"><div class="font-black text-sm mb-1.5">👀 まずここだけ</div>${myUl(ev.first)}</div>
     <div class="mt-3 bg-lime/5 border border-lime/40 rounded-xl p-3"><div class="font-black text-sm mb-1.5">🚀 今週からやること（大事な順）</div><ol class="space-y-1.5 text-[13px] leading-relaxed list-decimal pl-5">${ev.next.map(x => `<li>${esc(x)}</li>`).join('')}</ol></div>
@@ -3088,7 +3238,7 @@ function myReviewHtml(cid, d, pub) {
     ${myBars(ev.parts)}
     ${secs}
     ${myDet('📚 関連するナレッジ', myKnow(ev.know))}
-    <div class="border-t border-line pt-3 mt-3 flex flex-wrap items-center gap-2"><span class="text-[10px] text-muted flex-1 min-w-[200px]">使ったデータ：${esc(MY_EVAL[cid].by)}。1本ずつの評価は「🎬 コンテンツ別」で見られます。</span>${btn}</div>
+    <div class="border-t border-line pt-3 mt-3 flex flex-wrap items-center gap-2"><span class="text-[10px] text-muted flex-1 min-w-[200px]">使ったデータ：${esc(E.by)}。1本ずつの評価は「🎬 コンテンツ別」で見られます。</span>${btn}</div>
   </div>`;
 }
 
@@ -3254,7 +3404,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/10-1';
+const MY_VER = '11/10-2';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明' };
@@ -3462,8 +3612,8 @@ function myProfHtml(cid) {
   const p = myProf(cid), all = MY_PF.flatMap(g => g[1]), done = all.filter(([k]) => (p[k] || '').trim()).length;
   const f = ([k, l, ph]) => `<label class="block text-xs font-bold mt-2">${l}${(p[k] || '').trim() ? '' : ' <span class="text-amber font-normal">未記入</span>'}<textarea data-myprof="${k}" rows="2" class="mt-1 w-full bg-void border border-line rounded-lg p-2 text-xs font-normal" placeholder="${esc(ph)}">${esc(p[k] || '')}</textarea></label>`;
   return `<div class="bg-panel border border-line rounded-xl p-3 sm:p-4 glow mb-4">
-    <div class="flex flex-wrap items-baseline gap-2"><div class="font-black text-sm">📝 自己プロデュース（AIに伝える情報）</div><span class="text-[11px] font-bold ${done < all.length ? 'text-amber' : 'text-lime'}">${done}/${all.length} 入力済み</span><span class="text-[10px] text-muted">入力すると自動で保存されます</span></div>
-    <p class="text-[11px] text-muted mt-2">ここに書いた内容と実際の数字を比べて、AIが「方針や目標がずれていないか」「入力の内容が今のままでいいか」も評価します。この端末の中だけに保存されます。${MY_PUBLIC[cid] ? '<br>※ 一部は公開されている情報から仮に入れています。本人が書き直してください。' : ''}</p>
+    <div class="flex flex-wrap items-baseline gap-2"><div class="font-black text-sm">📝 自己プロデュース（AIに伝える情報）</div><span class="text-[11px] font-bold ${done < all.length ? 'text-amber' : 'text-lime'}">${done}/${all.length} 入力済み</span><span class="text-[10px] text-muted">入力すると自動で保存されます</span><span id="mySync" class="text-[10px] font-bold ${(MY_SYNC[MY.sync] || [])[1] || ''}">${mySid(cid) ? (MY_SYNC[MY.sync] || [''])[0] : ''}</span></div>
+    <p class="text-[11px] text-muted mt-2">ここに書いた内容と実際の数字を比べて、AIが「方針や目標がずれていないか」「入力の内容が今のままでいいか」も評価します。${mySid(cid) ? '<b class="text-lime">保管庫に保存するので、どの端末で開いても同じ内容です。</b>' : MY_VAULT ? '<b class="text-amber">今はこの端末だけに保存されます。このチャンネルでGoogleにログインすると、どの端末で開いても同じ内容になります。</b>' : 'この端末の中だけに保存されます。'}${MY_PUBLIC[cid] ? '<br>※ 一部は公開されている情報から仮に入れています。本人が書き直してください。' : ''}</p>
     ${MY_PF.map(([gt, fs, tip]) => `<div class="mt-3 pt-2 border-t border-line"><div class="text-xs font-black text-neon">${gt}</div>${tip ? `<div class="text-[11px] text-muted mt-0.5">💡 ${tip}</div>` : ''}<div class="grid md:grid-cols-2 gap-x-3">${fs.map(f).join('')}</div></div>`).join('')}
     ${myRefsHtml(p)}
   </div>`;
@@ -3486,7 +3636,7 @@ function myRefsHtml(p) {
 }
 function myRefSave(el) {
   const cid = MY.sel, p = myProf(cid), [i, k] = el.dataset.myref.split(':');
-  p.refs = p.refs || []; if (!p.refs[+i]) return; p.refs[+i][k] = el.value; mySet('vtb_my_prof_' + cid, p);
+  p.refs = p.refs || []; if (!p.refs[+i]) return; p.refs[+i][k] = el.value; mySet('vtb_my_prof_' + cid, p); myProfPush(cid);
 }
 
 // 動画1本の細かい数字：維持率・冒頭1分・離れた場所・同接の推移・登録していない人の割合
@@ -3563,6 +3713,13 @@ async function openMyVideo(id) {
 
 // 依頼文（送ってもらった型＋VTrend Baseの知識）を作ってコピー
 async function myPrompt(vid) {
+  const { text } = await myPromptText(vid);
+  openModal('AIへの依頼文', `<p class="text-xs text-muted mb-2">送ってもらった型に、この動画の数字とVTrend Baseの比較・ナレッジを入れた文章です。コピーしてAI（GeminiやClaudeなど）に貼り付けてください。</p>
+    <textarea readonly rows="16" class="w-full bg-void border border-line rounded-lg p-2 text-[11px] font-mono" data-selectall>${esc(text)}</textarea>
+    <button class="mt-2 w-full bg-neon text-white font-bold rounded-lg px-4 py-2.5 text-sm" data-copy="${esc(text)}" data-copymsg="依頼文をコピーしました">📋 コピーする</button>`);
+}
+// forAI=true：保管庫のAIに直接送る用（説明欄を取ってきて入れ、画像を添付し、答えをJSONで返してもらう）
+async function myPromptText(vid, forAI = false) {
   const cid = MY.sel, d = myCache(cid), pub = myPub(cid), p = myProf(cid);
   const vids = (d && d.videos.length ? d.videos : pub ? pub.videos : []);
   const isRev = vid === 'review';  // 総評（チャンネル全体）用
@@ -3603,12 +3760,20 @@ async function myPrompt(vid) {
     d.dev && d.dev.length ? '- 機器：' + d.dev.map(x => `${(MY_DEV[x.deviceType] || x.deviceType).replace(/^\S+ /, '')}(${x.views})`).join('、') : '',
     d.geo && d.geo.length ? '- 国：' + d.geo.slice(0, 6).map(x => `${myRegion(x.country)}(${x.views})`).join('、') : '',
     d.shr && d.shr.length ? '- 共有された先：' + d.shr.map(x => `${MY_SHARE[x.sharingService] || x.sharingService}(${x.shares})`).join('、') : '', '');
-  const allV = myVids(d, pub);
+  const allV = myVids(d, pub), images = [];
   if (isRev) {
     const ch = (d && d.desc) || (pub && pub.desc) || '', th = (pub && pub.th) || (d && d.th) || '';
-    L.push('# チャンネルの概要欄', ch || '（取得できませんでした。YouTubeの概要欄をここに貼り付けてください）', '', '# アイコン', th ? '- 画像：' + th : '- （アイコンの画像を添付してください）', '');
+    // AIに送るとき：アイコンと、よく見られた4本・新しい4本のサムネを画像で添付する
+    const picks = forAI ? [...[...allV].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 4), ...allV.slice(0, 6)].filter((x, i, arr) => arr.findIndex(y => y.id === x.id) === i).slice(0, 8) : [];
+    if (forAI) { if (th) images.push(th); picks.forEach(x => images.push(`https://i.ytimg.com/vi/${x.id}/mqdefault.jpg`)); }
+    L.push('# チャンネルの概要欄', ch || '（取得できませんでした。YouTubeの概要欄をここに貼り付けてください）', '', '# アイコン', forAI && th ? '- 添付した1枚目の画像がアイコンです' : th ? '- 画像：' + th : '- （アイコンの画像を添付してください）', '');
+    if (forAI && picks.length) L.push('# 添付したサムネイル（2枚目から順に）', ...picks.map((x, i) => `- ${i + 2}枚目：${x.id}｜${x.title}｜再生 ${x.views}`), '');
     L.push('# 投稿したコンテンツ（すべて）', ...allV.map(x => `- ${(MY_FMT[x.fmt] || '').replace(/^\S+ /, '')}｜${x.at && x.at.length > 10 ? new Date(x.at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' }) : ''}｜${x.title}｜${x.dur ? mySec(x.dur) : ''}｜再生 ${x.views}${x.likes != null ? '｜高評価 ' + x.likes : ''}${x.imp != null ? '｜インプ ' + x.imp + '｜CTR ' + myF1(x.ctr) + '%' : ''}${x.avp != null ? '｜平均視聴率 ' + myF1(x.avp) + '%' : ''}${x.pcv != null ? '｜最高同接 ' + x.pcv : ''}｜サムネ https://i.ytimg.com/vi/${x.id}/mqdefault.jpg`), '');
-    L.push('# 説明欄', '（いくつかの動画の説明欄をここに貼り付けてください。毎回同じ部分と、回ごとに変えている部分が分かると良いです）', '');
+    // ログイン中なら、新しい8本の説明欄を取ってきて入れる
+    let descs = []; const tk = MY.tokens[cid];
+    if (tk && tk.exp > Date.now() && allV.length) { try { const j = await myApi(tk, 'https://www.googleapis.com/youtube/v3/videos?part=snippet&id=' + allV.slice(0, 8).map(x => x.id).join(','));
+      descs = (j.items || []).map(x => '## ' + x.snippet.title + '\n' + ((x.snippet.description || '').slice(0, 700) || '（空）') + '\nタグ：' + ((x.snippet.tags || []).slice(0, 15).join('、') || 'なし')); } catch (e) {} }
+    L.push('# 説明欄', ...(descs.length ? ['（新しい順に' + descs.length + '本）', ...descs] : ['（いくつかの動画の説明欄をここに貼り付けてください。毎回同じ部分と、回ごとに変えている部分が分かると良いです）']), '');
   } else L.push('# ほかの配信・動画（比較用）', ...allV.slice(0, 15).map(x => `- ${MY_FMT[x.fmt] || ''} ${x.title}｜再生 ${x.views}${x.likes != null ? '｜高評価 ' + x.likes : ''}${x.avp != null ? '｜平均視聴率 ' + myF1(x.avp) + '%' : ''}${x.ctr != null ? '｜CTR ' + myF1(x.ctr) + '%' : ''}`), '');
   if (base && base.n) L.push('# 同じ規模で「いま伸びている」VTuberとの比較（VTrend Base調べ・登録者1万人未満・同じ形式・' + base.n + '本）', `- 再生÷登録者の中央値：${base.ratio != null ? (base.ratio * 100).toFixed(1) + '%' : '不明'}`, `- 高評価率の中央値：${base.like != null ? (base.like * 100).toFixed(1) + '%' : '不明'}`, '');
   L.push('# 参考にする知識（VTrend Baseのナレッジ）', ...KNOW.filter(k => ['algo', 'thumb', 'talk', 'live', 'short'].includes(k.cat)).slice(0, 14).map(k => '- ' + k.title), '');
@@ -3631,10 +3796,15 @@ async function myPrompt(vid) {
     '## 4. 長期的なファン化・登録率アップの戦略', '- チャンネル登録・メンバーシップ・リピーター獲得につなげる導線設計（エンドカード、固定コメント、配信中の呼びかけ等）',
     '## 5. 説明欄の直し方', '- この動画の説明欄の最初の2〜3行の案と、入れるべきリンク',
     '', '※ 最初に「まずここだけ」として、いちばん大事なことを3行でまとめてください。専門用語は使わず、わかりやすい日本語で書いてください。');
+  if (forAI && isRev) L.push('---', '# 返し方（必ず守ってください）', '上の1〜7の内容を、次の形のJSONだけで返してください（前後の説明やコードブロックの記号は付けない）。',
+    '{"parts":[入力した内容の点,投稿した内容の点,概要欄・説明欄の点,アイコンの点,サムネイルの点],"first":["まずここだけ（3つ）"],"secs":[{"ok":[],"gap":[],"ask":[]},{"ok":[],"gap":[],"todo":[]},{"ok":[],"gap":[],"todo":[]},{"ok":[],"gap":[],"todo":[]},{"ok":[],"gap":[],"todo":[]},{"ok":[],"gap":[],"todo":[]}],"thumbs":[{"ids":["動画ID"],"cap":"この並びで分かること"}],"next":["今週からやること（大事な順に5つ）"],"know":["ナレッジのID"]}',
+    '- parts はそれぞれ20点満点の整数（合計が100点満点の総合点になります）',
+    '- secs は「1.入力した内容 2.投稿した内容 3.概要欄 4.説明欄 5.アイコン 6.サムネイル」の順。ok=良いところ、gap=課題・ずれているところ、todo=やること、ask=教えてほしいこと（1だけ）。それぞれ2〜5個',
+    '- 1つ1つの文に、実際の動画名・数字・曜日や時間を入れて具体的に書く。「〜しましょう」だけの一般論は書かない',
+    '- thumbs は、並べて比べると分かりやすいサムネの組（動画IDは上の一覧のサムネのURLの vi/ のあとの11文字）を1〜2組',
+    '- know は次の中から関係のあるものを3〜8個（IDだけ）：' + KNOW.map(k => k.id + '=' + k.title).join('／'));
   const text = L.filter(x => x !== '').join('\n').replace(/\n(#)/g, '\n\n$1');
-  openModal('AIへの依頼文', `<p class="text-xs text-muted mb-2">送ってもらった型に、この動画の数字とVTrend Baseの比較・ナレッジを入れた文章です。コピーしてAI（GeminiやClaudeなど）に貼り付けてください。</p>
-    <textarea readonly rows="16" class="w-full bg-void border border-line rounded-lg p-2 text-[11px] font-mono" data-selectall>${esc(text)}</textarea>
-    <button class="mt-2 w-full bg-neon text-white font-bold rounded-lg px-4 py-2.5 text-sm" data-copy="${esc(text)}" data-copymsg="依頼文をコピーしました">📋 コピーする</button>`);
+  return { text, images };
 }
 
 function mySetupInfo() {
@@ -3648,12 +3818,12 @@ function myClick(t, d) {
   if (d.mydays) { MY.days = d.mydays === 'all' ? 'all' : +d.mydays; render(); if (MY.tokens[MY.sel]) myFetch(MY.sel); return true; }
   if (d.myrefresh !== undefined) { myFetch(MY.sel); return true; }
   if (d.myvid) { openMyVideo(d.myvid); return true; }
-  if (d.myview) { MY.view = d.myview; render(); window.scrollTo(0, 0); return true; }
+  if (d.myview) { MY.view = d.myview; render(); window.scrollTo(0, 0); if (d.myview === 'prof' && MY.sel) myVaultPull(MY.sel); return true; }
   if (d.myrefadd !== undefined || d.myrefdel !== undefined) {
     const cid = MY.sel, p = myProf(cid); p.refs = p.refs || [];
     if (d.myrefadd !== undefined) p.refs.push({ url: '', what: '', memo: '' });
     else if (confirm('この参考チャンネルを削除しますか？')) p.refs.splice(+d.myrefdel, 1); else return true;
-    mySet('vtb_my_prof_' + cid, p); render();
+    mySet('vtb_my_prof_' + cid, p); myProfPush(cid); render();
     if (d.myrefadd !== undefined) { const el = document.querySelector(`[data-myref="${p.refs.length - 1}:url"]`); if (el) { el.focus(); el.scrollIntoView({ block: 'center' }); } }
     return true;
   }
@@ -3670,11 +3840,11 @@ function myClick(t, d) {
     if (!confirm(`「${nm}」をこの端末の一覧から消しますか？\n（YouTubeのチャンネルには何も起きません。この端末に保存した数字・自己プロデュースの入力も消えます）`)) return true;
     myLogout(d.mydel);
     myAcctsSet(myAccts().filter(x => x.cid !== d.mydel));
-    ['data', 'pub', 'prof'].forEach(k => { delete MYMEM['vtb_my_' + k + '_' + d.mydel]; try { localStorage.removeItem('vtb_my_' + k + '_' + d.mydel); } catch (e) {} });
+    ['data', 'pub', 'prof', 'eval'].forEach(k => { delete MYMEM['vtb_my_' + k + '_' + d.mydel]; try { localStorage.removeItem('vtb_my_' + k + '_' + d.mydel); } catch (e) {} });
     delete MY.tokens[d.mydel]; if (MY.sel === d.mydel) MY.sel = null; MY.view = 'home'; toast('消しました'); render(); return true;
   }
   // メイン画面：アカウントを開く・並べ替え・URLで追加
-  if (d.myopen) { MY.sel = d.myopen; MY.err = ''; mySet('vtb_my_sel', d.myopen); MY.view = 'review'; render(); window.scrollTo(0, 0); myPubRefresh(d.myopen); return true; }
+  if (d.myopen) { MY.sel = d.myopen; MY.err = ''; mySet('vtb_my_sel', d.myopen); MY.view = 'review'; MY.evErr = ''; render(); window.scrollTo(0, 0); myPubRefresh(d.myopen); myVaultPull(d.myopen); myFetchIfOld(d.myopen); return true; }
   if (d.mymove) { const [cid, dir] = d.mymove.split(':'), a = myAccts(), i = a.findIndex(x => x.cid === cid), j = i + (+dir);
     if (i >= 0 && j >= 0 && j < a.length) { [a[i], a[j]] = [a[j], a[i]]; myAcctsSet(a); render(); } return true; }
   if (d.myurladd !== undefined) { myUrlAdd(($('#myUrlIn') || {}).value || ''); return true; }
@@ -3767,6 +3937,13 @@ document.addEventListener('change', e => {
   render();
 });
 document.addEventListener('focusin', e => { if (e.target.matches('[data-selectall]')) e.target.select(); });
+// 埋め込み（Wix）の中：新しいタブで開いてみて、ブロックされたらURLをコピーする
+if (IN_FRAME) document.addEventListener('click', e => {
+  const a = e.target.closest && e.target.closest('a[target="_blank"]'); if (!a || !a.href) return;
+  e.preventDefault();
+  let w = null; try { w = window.open(a.href, '_blank'); } catch (x) {}
+  if (w) { try { w.opener = null; } catch (x) {} } else copyText(a.href, 'このページの中では開けなかったので、URLをコピーしました。新しいタブに貼り付けてください');
+}, true);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 (async () => {
@@ -3774,7 +3951,10 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal()
   myLoadTokens();
   setMode(); render();
   // Googleのログインから戻ってきたときは、そのままチャンネルの数字を取りに行く
-  if (myPending) { const p = myPending; myPending = null; myAfterLogin(p.r, p.want); }
+  if (myPending) { const p = myPending; myPending = null; if (p.code) myVaultLogin(p.code, p.redirect, p.want); else myAfterLogin(p.r, p.want); }
+  // 保管庫でログインしているアカウントは、鍵が切れる前に自動で新しくする（ずっとログイン）
+  if (MY_VAULT) { myKeep(); setInterval(myKeep, 4 * 60e3);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { myKeep(); if (S.tab === 'my' && MY.sel && MY.view !== 'home') myVaultPull(MY.sel); } }); }
 })();
 </script>
 </body>
