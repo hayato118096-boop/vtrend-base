@@ -3147,7 +3147,7 @@ function myBase(fmtId, genre) {
 const MY_FMT = { stream:'🔴 配信', short:'📱 ショート', video:'🎬 動画' };
 const MY_CT = { SHORTS:'📱 ショート', LIVE_STREAM:'🔴 配信', VIDEO_ON_DEMAND:'🎬 動画', STORY:'ストーリー', UNSPECIFIED:'その他',
   // YouTubeアナリティクスは実際には次の名前で返してくる
-  shorts:'📱 ショート', liveStream:'🔴 配信', videoOnDemand:'🎬 動画', story:'ストーリー', posts:'📝 投稿（コミュニティ）', unspecified:'その他' };
+  shorts:'📱 ショート', liveStream:'🔴 配信', videoOnDemand:'🎬 動画', story:'ストーリー', posts:'📝 投稿（コミュニティ）', unspecified:'その他', creatorContentTypeUnspecified:'その他（YouTubeが分類していない分）' };
 // アナリティクスの形式名 → サイトの形式（配信・ショート・動画）
 const MY_CT2F = { liveStream: 'stream', LIVE_STREAM: 'stream', shorts: 'short', SHORTS: 'short', videoOnDemand: 'video', VIDEO_ON_DEMAND: 'video' };
 // YouTubeの分類が分からないときの推測：プレミア公開（歌ってみたなど）にも「ライブの記録」が付くので、10分未満は配信にしない
@@ -3434,7 +3434,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-7';
+const MY_VER = '11/11-8';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明' };
