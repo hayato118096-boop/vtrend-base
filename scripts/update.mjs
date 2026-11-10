@@ -732,16 +732,23 @@ async function gemini(parts, { search = false, tier = 'lite', lowMedia = false, 
     if (!busy && !quota && !gone) throw new Error(msg);
     // 混雑・上限で断られた呼び出しは、回数に数えない
     if (busy || quota) { usedCalls[model]--; diag.usage = { ...usedCalls }; }
-    // 混雑：最大3回まで待ってやり直す（20秒→40秒→60秒）。1分あたりの上限：指定の秒数だけ待って1回やり直す
-    const n = waited.get(model) || 0, m = /retry in ([\d.]+)s/i.exec(msg);
+    // どの上限に当たったか（1分あたり／1日あたり）と、何秒待てばよいかを、エラーの詳しい情報から読む
+    const det = Array.isArray(j.error.details) ? j.error.details : [];
+    const qids = det.flatMap(x => x.violations || []).map(v => v.quotaId || v.quotaMetric || '').filter(Boolean);
+    const rd = (det.find(x => x.retryDelay) || {}).retryDelay, m = /retry in ([\d.]+)s/i.exec(msg);
+    const waitS = rd ? parseFloat(rd) : m ? +m[1] : null;
+    const perDay = qids.some(q => /PerDay/i.test(q)), perMin = !perDay && (qids.some(q => /PerMinute/i.test(q)) || waitS != null);
+    // 混雑：最大3回まで待ってやり直す（20秒→40秒→60秒）
+    // 1分あたりの上限（回数・トークン量）：言われた秒数だけ待って、最大3回までやり直す（1日あたりの上限なら次のモデルへ）
+    const n = waited.get(model) || 0;
     if (busy && n < 3) { waited.set(model, n + 1); await sleep((n + 1) * 20000); continue; }
-    if (quota && m && +m[1] <= 65 && n < 1) { waited.set(model, n + 1); await sleep((+m[1] + 2) * 1000); continue; }
+    if (quota && perMin && n < 3) { waited.set(model, n + 1); const s = Math.min(Math.max(waitS || 30, 5), 90); console.log(`AIモデル ${model}：1分あたりの上限のため ${Math.round(s)}秒待ちます`); await sleep((s + 2) * 1000); continue; }
     // それでもだめなら、このモデルは今回は使わず次のモデルへ
     deadModels.add(model);
-    const why = gone ? '使えないモデル' : busy ? '混雑' : '無料枠';
-    console.log(`AIモデル ${model} を外しました（${why}）`);
+    const why = gone ? '使えないモデル' : busy ? '混雑' : perDay ? '1日の無料枠' : '無料枠';
+    console.log(`AIモデル ${model} を外しました（${why}）${qids.length ? ' ' + qids.join(',') : ''}`);
     if (diag.switches == null) diag.switches = [];
-    if (diag.switches.length < 20) diag.switches.push(`${model}（${why}: ${msg.slice(0, 80)}）`);
+    if (diag.switches.length < 20) diag.switches.push(`${model}（${why}: ${qids.join(',') || '-'}／${msg.slice(0, 200)}）`);
   }
   throw new Error('AIの再試行の上限に達しました');
 }
