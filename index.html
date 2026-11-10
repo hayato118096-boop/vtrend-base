@@ -97,6 +97,7 @@ tailwind.config = {
   <section id="view-content" class="view hidden"></section>
   <section id="view-know" class="view hidden"></section>
   <section id="view-guide" class="view hidden"></section>
+  <p class="mt-10 mb-4 text-center text-[11px] text-muted"><a href="privacy.html" target="_blank" rel="noopener" class="underline hover:text-neon">プライバシーポリシー</a></p>
 </main>
 
 <!-- ポップアウト -->
@@ -3404,7 +3405,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-1';
+const MY_VER = '11/11-2';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明' };
@@ -3941,7 +3942,12 @@ document.addEventListener('focusin', e => { if (e.target.matches('[data-selectal
 if (IN_FRAME) document.addEventListener('click', e => {
   const a = e.target.closest && e.target.closest('a[target="_blank"]'); if (!a || !a.href) return;
   e.preventDefault();
-  let w = null; try { w = window.open(a.href, '_blank'); } catch (x) {}
+  // Wixの中から開いたタブはWixの制限を引き継ぐため、YouTubeの動画ページ（watch）は表示を断られる。
+  // 動画は「埋め込み用の再生ページ」（制限があっても表示できる）で開く。チャンネル・検索のページは開けないのでURLをコピーする
+  let u = a.href; const m = /^https:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|live\/)|youtu\.be\/)([\w-]{11})(?:[^#]*?[?&]t=(\d+))?/.exec(u);
+  if (m) u = 'https://www.youtube.com/embed/' + m[1] + '?autoplay=1' + (m[2] ? '&start=' + m[2] : '');
+  else if (/^https:\/\/(www\.|m\.)?youtube\.com\//.test(u)) return copyText(u, 'YouTubeのこのページはWixの中からは開けないので、URLをコピーしました。新しいタブに貼り付けてください');
+  let w = null; try { w = window.open(u, '_blank'); } catch (x) {}
   if (w) { try { w.opener = null; } catch (x) {} } else copyText(a.href, 'このページの中では開けなかったので、URLをコピーしました。新しいタブに貼り付けてください');
 }, true);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });

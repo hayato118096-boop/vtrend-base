@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>プライバシーポリシー｜VTrend Base</title>
+<style>
+  :root { --bg:#f7f7fb; --panel:#fff; --ink:#1f2330; --muted:#5d6475; --line:#e3e5ee; --accent:#6d4aff; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14151c; --panel:#1d1f29; --ink:#ececf3; --muted:#a3a8b8; --line:#2d3040; --accent:#a78bff; } }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family: system-ui, -apple-system, "Hiragino Sans", "Yu Gothic UI", sans-serif; line-height:1.8; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  h2 { font-size: 1.05rem; margin: 28px 0 6px; padding-top: 16px; border-top: 1px solid var(--line); }
+  p, li { font-size: .95rem; }
+  .muted { color: var(--muted); font-size: .85rem; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  a { color: var(--accent); }
+  ul { padding-left: 1.3em; }
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>プライバシーポリシー</h1>
+    <p class="muted">VTrend Base（<a href="https://hayato118096-boop.github.io/vtrend-base/">https://hayato118096-boop.github.io/vtrend-base/</a>）　最終更新：2026年11月11日</p>
+
+    <p>VTrend Base は、VTuber のトレンドを調べたり、自分の YouTube チャンネルの数字を見たりするためのサイトです。このページでは、「マイチャンネル」で Google にログインしたときに、どの情報をどう使うかを説明します。</p>
+
+    <h2>1. ログインで見せてもらう情報</h2>
+    <ul>
+      <li>YouTube のチャンネル情報と動画の一覧（YouTube Data API・読み取りだけ）</li>
+      <li>YouTube アナリティクスの数字（再生・視聴時間・インプレッション・流入元・年齢層など。YouTube Analytics API・読み取りだけ）</li>
+    </ul>
+    <p>動画の投稿・編集・削除、コメント、チャンネルの設定の変更など、書き込みは一切しません。</p>
+
+    <h2>2. 情報の使い道</h2>
+    <ul>
+      <li>ログインした本人に、自分のチャンネルの数字・総評・改善のヒントを画面で見せるため</li>
+      <li>AI の総評を作るため（下の「4」）</li>
+    </ul>
+    <p>広告や販売には使いません。ほかの人に見せたり、渡したりもしません。</p>
+
+    <h2>3. 保存する場所</h2>
+    <ul>
+      <li><b>見ている端末のブラウザ</b>：取ってきた数字、ログイン中であることの印、入力した「自己プロデュース」</li>
+      <li><b>保管庫（運営者の Google アカウントの Google Apps Script と Google ドライブ）</b>：ログインしたままにするための更新用の鍵、入力した「自己プロデュース」、AI の総評。どの端末で開いても同じ内容を見られるようにするためです。</li>
+    </ul>
+
+    <h2>4. AI（Google Gemini）について</h2>
+    <p>総評を作るときは、チャンネルの数字・動画のタイトルと説明欄・アイコンとサムネイルの画像・入力した自己プロデュースを、Google の Gemini API に送ります。総評は1つのチャンネルにつき1日1回までです。</p>
+
+    <h2>5. Google のデータの扱い</h2>
+    <p>Google API から受け取った情報の使い方は、<a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener">Google API サービスのユーザーデータに関するポリシー</a>（限定的な使用の要件を含む）に従います。あわせて <a href="https://www.youtube.com/t/terms" target="_blank" rel="noopener">YouTube 利用規約</a> と <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">Google プライバシーポリシー</a> も適用されます。</p>
+
+    <h2>6. やめたいとき・消したいとき</h2>
+    <ul>
+      <li>マイチャンネルの「ログアウト」を押すと、その端末のログインと保管庫のログインの印が消えます。</li>
+      <li>アカウントの「設定」→「消す」で、その端末に保存した数字と入力が消えます。</li>
+      <li><a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">Google アカウントの「サードパーティ製のアプリとサービス」</a> から VTrend Base のアクセスを取り消すと、更新用の鍵は使えなくなります。</li>
+      <li>保管庫に残っている入力・総評を消したいときは、運営者に連絡してください（Google のログイン画面に出ているサポートの連絡先）。</li>
+    </ul>
+
+    <h2>7. このページの変更</h2>
+    <p>内容を変えるときは、このページを書き直し、上の「最終更新」の日付を変えます。</p>
+  </div>
+</main>
+</body>
+</html>
