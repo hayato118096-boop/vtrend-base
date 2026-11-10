@@ -3024,12 +3024,6 @@ async function myFetch(cid) {
   const days = all ? Math.round((end - start) / DAY) + 1 : MY.days;
   const pEnd = new Date(start - DAY), pStart = new Date(pEnd - (days - 1) * DAY);
   const R = (q, s = start, e = end) => myApi(tok, 'https://youtubeanalytics.googleapis.com/v2/reports?' + new URLSearchParams({ ids: 'channel==MINE', startDate: myDate(s), endDate: myDate(e), ...q }));
-  // 200件ずつページを分けて、全部取る（YouTubeは1回に200件までしか返さない）
-  const RP = async (q, s = start, e = end) => { let all = null;
-    for (let i = 1; i < 5000; i += 200) { const j = await R({ ...q, maxResults: 200, startIndex: i }, s, e);
-      if (!all) all = j; else all.rows = (all.rows || []).concat(j.rows || []);
-      if (!j.rows || j.rows.length < 200) break; }
-    return all; };
   const TOT = 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,subscribersLost,likes,comments,shares';
   const jobs = {
     ch: chP,
@@ -3048,31 +3042,45 @@ async function myFetch(cid) {
     src: R({ dimensions: 'insightTrafficSourceType', metrics: 'views,estimatedMinutesWatched', sort: '-views' }),
     age: R({ dimensions: 'ageGroup,gender', metrics: 'viewerPercentage' }),
     sub: R({ dimensions: 'subscribedStatus', metrics: 'views,estimatedMinutesWatched' }),
-    // 動画ごとの数字：全部の動画（200本ずつページを分けて取る）
-    vid: RP({ dimensions: 'video', metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,likes,comments,shares', sort: '-views' }),
-    // YouTube自身の分類（配信・ショート・動画）。長さやライブの記録から推測すると、プレミア公開や短い動画を間違えるため
-    ctLive: RP({ dimensions: 'video', metrics: 'views', filters: 'creatorContentType==liveStream', sort: '-views' }),
-    ctShort: RP({ dimensions: 'video', metrics: 'views', filters: 'creatorContentType==shorts', sort: '-views' }),
-    ctVod: RP({ dimensions: 'video', metrics: 'views', filters: 'creatorContentType==videoOnDemand', sort: '-views' }),
   };
   const keys = Object.keys(jobs), res = await Promise.allSettled(Object.values(jobs)), g = {}, errs = [];
-  keys.forEach((k, i) => res[i].status === 'fulfilled' ? g[k] = res[i].value : /^ct/.test(k) ? null : errs.push(k + '：' + res[i].reason.message));
-  // 動画ID → 形式（YouTube自身の分類）
-  const ctype = {}; [['ctVod', 'video'], ['ctShort', 'short'], ['ctLive', 'stream']].forEach(([k, f]) => { if (g[k]) myRows(g[k]).forEach(r => { ctype[r.video] = f; }); });
+  keys.forEach((k, i) => res[i].status === 'fulfilled' ? g[k] = res[i].value : errs.push(k + '：' + res[i].reason.message));
   const one = j => j ? (myRows(j)[0] || {}) : null;
   const d = { cid, days, all, at: Date.now(), range: [myDate(start), myDate(end)], errs,
     tot: one(g.tot), prev: one(g.prev), daily: g.day ? myRows(g.day) : [], fmt: g.fmt ? myRows(g.fmt) : [],
     src: g.src ? myRows(g.src) : [], age: g.age ? myRows(g.age) : [], sub: g.sub ? myRows(g.sub) : [], videos: [],
     kw: g.kw ? myRows(g.kw) : [], rel: g.rel ? myRows(g.rel) : [], ext: g.ext ? myRows(g.ext) : [],
-    dev: g.dev ? myRows(g.dev) : [], geo: g.geo ? myRows(g.geo) : [], loc: g.loc ? myRows(g.loc) : [], shr: g.shr ? myRows(g.shr) : [], ctype };
+    dev: g.dev ? myRows(g.dev) : [], geo: g.geo ? myRows(g.geo) : [], loc: g.loc ? myRows(g.loc) : [], shr: g.shr ? myRows(g.shr) : [], ctype: {} };
   // 関連動画（どの動画のおすすめから来たか）のタイトルを付ける
   if (d.rel.length) { try { const j = await myApi(tok, 'https://www.googleapis.com/youtube/v3/videos?part=snippet&id=' + d.rel.map(r => r.insightTrafficSourceDetail).join(','));
     const t = Object.fromEntries((j.items || []).map(x => [x.id, { title: x.snippet.title, ch: x.snippet.channelTitle, own: x.snippet.channelId === cid }]));
     d.rel.forEach(r => Object.assign(r, t[r.insightTrafficSourceDetail] || {})); } catch (e) {} }
   const ch = g.ch && g.ch.items && g.ch.items[0];
   if (ch) { d.name = ch.snippet.title; d.desc = ch.snippet.description || ''; d.subs = +ch.statistics.subscriberCount || null; d.vcount = +ch.statistics.videoCount || null; d.th = (ch.snippet.thumbnails.default || {}).url; }
-  // 動画ごと：タイトル・長さ・配信かどうかを付ける
-  const vr = g.vid ? myRows(g.vid) : [];
+  // 動画ごとの数字：全部の動画を取る
+  // （YouTubeの「上位の動画」は200本までしか返さないので、アップロード一覧から全部のIDを取り、200本ずつ指定して頼む）
+  const vr = [], ctype = d.ctype;
+  try {
+    const ids = []; let pt = '';
+    for (let i = 0; i < 100; i++) {
+      MY.busy = `動画の一覧を取得中…（${ids.length}本）`; render();
+      const j = await myApi(tok, 'https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=UU' + cid.slice(2) + (pt ? '&pageToken=' + pt : ''));
+      (j.items || []).forEach(x => ids.push(x.contentDetails.videoId)); pt = j.nextPageToken; if (!pt) break;
+    }
+    d.allIds = ids.length;
+    const VM = 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,likes,comments,shares';
+    const parts = (n) => { const a = []; for (let i = 0; i < ids.length; i += n) a.push(ids.slice(i, i + n)); return a; };
+    MY.busy = `動画ごとの数字を取得中…（${ids.length}本）`; render();
+    // 数字（200本ずつ）と、YouTube自身の分類（500本ずつ）を同時に
+    const [numRes, ctRes] = await Promise.all([
+      Promise.all(parts(200).map(p => R({ dimensions: 'video', metrics: VM, filters: 'video==' + p.join(',') }))),
+      Promise.all(parts(500).map(p => R({ dimensions: 'video,creatorContentType', metrics: 'views', filters: 'video==' + p.join(',') }).catch(() => null))),
+    ]);
+    numRes.forEach(j => myRows(j).forEach(r => vr.push(r)));
+    const ctBest = {}; ctRes.forEach(j => j && myRows(j).forEach(r => { const f = MY_CT2F[r.creatorContentType]; if (f && (!ctBest[r.video] || r.views > ctBest[r.video].v)) ctBest[r.video] = { f, v: r.views }; }));
+    Object.entries(ctBest).forEach(([id, x]) => { ctype[id] = x.f; });
+    vr.sort((a, b) => b.views - a.views);
+  } catch (e) { errs.push('動画ごとの数字：' + e.message); }
   if (vr.length) {
     try {
       const info = {};
@@ -3119,6 +3127,9 @@ async function myFetch(cid) {
   MY.busy = 'インプレッション数を取得中…'; render();
   try { d.reach = await myReach(tok, start, end); } catch (e) { d.reach = { err: e.message }; }
   if (d.reach && d.reach.byVid) d.videos.forEach(v => { const r = d.reach.byVid[v.id]; if (r) { v.imp = r.imp; v.ctr = r.imp ? r.clk / r.imp * 100 : null; } });
+  // 動画ごとの数字が取れなかったときは、前回の分を残す（空で上書きしない）
+  const prevD = myCache(cid);
+  if (!d.videos.length && prevD && prevD.videos && prevD.videos.length) { d.videos = prevD.videos; d.ctype = prevD.ctype || {}; d.errs.push('動画ごとの数字は前回（' + new Date(prevD.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }) + '）のものを表示しています'); }
   mySet('vtb_my_data_' + cid, d);
   MY.busy = ''; render();
 }
@@ -3460,7 +3471,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-9';
+const MY_VER = '11/11-10';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ', SHORTS_FEED:'ショートのフィード', IMMERSIVE_LIVE_FEED:'ライブのフィード' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明', DIRECT_SYSTEM_ACTIVITY_DIALOG:'スマホの共有メニュー', FACEBOOK_MESSENGER:'Facebookメッセンジャー', INSTAGRAM:'Instagram', TIKTOK:'TikTok' };
