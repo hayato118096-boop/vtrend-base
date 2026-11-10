@@ -1950,7 +1950,7 @@ const MY_CLIENT_ID = '416446480098-oacb0sng4rtk6oc1t5h8fn2ekial735t.apps.googleu
 const MY_SCOPES = 'https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/youtube.readonly';
 // 保管庫（Google Apps Script のウェブアプリ）のアドレス。入っていると「ずっとログイン」「自己プロデュースをどの端末でも同じに」「AIの総評を1日1回自動で更新」が動く
 // 作り方は vault/Code.gs の先頭に書いてあります。空のときは今までどおり（ログインは約1時間・入力はこの端末だけ）
-const MY_VAULT = '';
+const MY_VAULT = 'https://script.google.com/macros/s/AKfycbw1uiGy35bcT5rib0qxZuvcKRPqgiSzjigLwtPiMB53HJ7TQ4SP2rLi7bJYtO2gCsLLVg/exec';
 const MY_SEED = [{ cid:'UCLJVi4L9FiBmME6goRqOjVg', name:'サウレ', handle:'@saure_vtuber', th:'' }];
 const MY = { sel: null, days: 'all', tokens: {}, busy: '', err: '', view: 'home', cfmt: 'all' };
 // 端末に保存できない環境（プライベートモードなど）でも動くように、まず画面の中に持っておき、保存できれば端末にも保存
@@ -3404,7 +3404,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/10-2';
+const MY_VER = '11/11-1';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明' };
