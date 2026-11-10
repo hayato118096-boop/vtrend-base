@@ -3417,7 +3417,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-4';
+const MY_VER = '11/11-5';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明' };
@@ -3639,9 +3639,15 @@ function myProfHtml(cid) {
       <div class="bg-panel border border-line rounded-xl p-2.5"><div class="text-xs font-black mb-1">📱 この端末の入力</div>${brief(myGet('vtb_my_prof_' + cid, {}))}<button class="mt-2 w-full bg-neon text-white rounded-lg py-2 text-xs font-bold" data-myprofuse="local">この端末の内容を使う</button></div>
       <div class="bg-panel border border-line rounded-xl p-2.5"><div class="text-xs font-black mb-1">☁️ 保管庫の入力（${esc(new Date(cf.server.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }))}）</div>${brief(cf.server.prof)}<button class="mt-2 w-full border border-neon/60 text-neon rounded-lg py-2 text-xs font-bold" data-myprofuse="server">保管庫の内容を使う</button></div>
     </div></div>` : '';
+  // 前にこの端末にあった入力（保管庫の内容で上書きしたときの控え）に戻せる
+  const bak = myGet('vtb_my_prof_bak_' + cid, null), cur = myGet('vtb_my_prof_' + cid, null);
+  const restore = !cf && bak && JSON.stringify(bak) !== JSON.stringify(cur) && Object.values(bak).some(v => Array.isArray(v) ? v.length : String(v || '').trim()) ? `<div class="bg-panel border border-neon/50 rounded-2xl p-3 sm:p-4 mb-4">
+    <div class="font-black text-sm">🕘 前にこの端末で入力していた内容が残っています</div>
+    <div class="mt-1.5">${brief(bak)}</div>
+    <div class="flex flex-wrap gap-2 mt-2"><button class="bg-neon text-white rounded-lg px-3 py-2 text-xs font-bold" data-myprofuse="bak">この内容に戻す（保管庫にも入れる）</button><button class="text-xs text-muted underline px-2" data-myprofuse="bakdel">いらない（控えを消す）</button></div></div>` : '';
   const p = myProf(cid), all = MY_PF.flatMap(g => g[1]), done = all.filter(([k]) => (p[k] || '').trim()).length;
   const f = ([k, l, ph]) => `<label class="block text-xs font-bold mt-2">${l}${(p[k] || '').trim() ? '' : ' <span class="text-amber font-normal">未記入</span>'}<textarea data-myprof="${k}" rows="2" class="mt-1 w-full bg-void border border-line rounded-lg p-2 text-xs font-normal" placeholder="${esc(ph)}">${esc(p[k] || '')}</textarea></label>`;
-  return conflict + `<div class="bg-panel border border-line rounded-xl p-3 sm:p-4 glow mb-4">
+  return conflict + restore + `<div class="bg-panel border border-line rounded-xl p-3 sm:p-4 glow mb-4">
     <div class="flex flex-wrap items-baseline gap-2"><div class="font-black text-sm">📝 自己プロデュース（AIに伝える情報）</div><span class="text-[11px] font-bold ${done < all.length ? 'text-amber' : 'text-lime'}">${done}/${all.length} 入力済み</span><span class="text-[10px] text-muted">入力すると自動で保存されます</span><span id="mySync" class="text-[10px] font-bold ${(MY_SYNC[MY.sync] || [])[1] || ''}">${mySid(cid) ? (MY_SYNC[MY.sync] || [''])[0] : ''}</span></div>
     <p class="text-[11px] text-muted mt-2">ここに書いた内容と実際の数字を比べて、AIが「方針や目標がずれていないか」「入力の内容が今のままでいいか」も評価します。${mySid(cid) ? '<b class="text-lime">保管庫に保存するので、どの端末で開いても同じ内容です。</b>' : MY_VAULT ? '<b class="text-amber">今はこの端末だけに保存されます。このチャンネルでGoogleにログインすると、どの端末で開いても同じ内容になります。</b>' : 'この端末の中だけに保存されます。'}${MY_PUBLIC[cid] ? '<br>※ 一部は公開されている情報から仮に入れています。本人が書き直してください。' : ''}</p>
     ${MY_PF.map(([gt, fs, tip]) => `<div class="mt-3 pt-2 border-t border-line"><div class="text-xs font-black text-neon">${gt}</div>${tip ? `<div class="text-[11px] text-muted mt-0.5">💡 ${tip}</div>` : ''}<div class="grid md:grid-cols-2 gap-x-3">${fs.map(f).join('')}</div></div>`).join('')}
@@ -3878,6 +3884,10 @@ function myClick(t, d) {
   if (d.mymove) { const [cid, dir] = d.mymove.split(':'), a = myAccts(), i = a.findIndex(x => x.cid === cid), j = i + (+dir);
     if (i >= 0 && j >= 0 && j < a.length) { [a[i], a[j]] = [a[j], a[i]]; myAcctsSet(a); render(); } return true; }
   // 保管庫とこの端末の入力が違うとき：選んだほうを使う
+  if (d.myprofuse === 'bak' || d.myprofuse === 'bakdel') { const cid = MY.sel, bak = myGet('vtb_my_prof_bak_' + cid, null);
+    if (d.myprofuse === 'bak' && bak) { const cur = myGet('vtb_my_prof_' + cid, null); mySet('vtb_my_prof_' + cid, bak); mySet('vtb_my_prof_bak2_' + cid, cur); mySet('vtb_my_prof_bak_' + cid, null); myProfPush(cid, 0); toast('前の入力に戻しました'); }
+    else if (confirm('控えを消しますか？（今の入力はそのまま残ります）')) { mySet('vtb_my_prof_bak_' + cid, null); }
+    render(); return true; }
   if (d.myprofuse) { const cid = MY.sel, cf = MY.profConflict && MY.profConflict[cid]; if (!cf) return true;
     const local = myGet('vtb_my_prof_' + cid, {});
     delete MY.profConflict[cid];
