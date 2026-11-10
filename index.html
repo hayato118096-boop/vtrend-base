@@ -3024,6 +3024,12 @@ async function myFetch(cid) {
   const days = all ? Math.round((end - start) / DAY) + 1 : MY.days;
   const pEnd = new Date(start - DAY), pStart = new Date(pEnd - (days - 1) * DAY);
   const R = (q, s = start, e = end) => myApi(tok, 'https://youtubeanalytics.googleapis.com/v2/reports?' + new URLSearchParams({ ids: 'channel==MINE', startDate: myDate(s), endDate: myDate(e), ...q }));
+  // 200件ずつページを分けて、全部取る（YouTubeは1回に200件までしか返さない）
+  const RP = async (q, s = start, e = end) => { let all = null;
+    for (let i = 1; i < 5000; i += 200) { const j = await R({ ...q, maxResults: 200, startIndex: i }, s, e);
+      if (!all) all = j; else all.rows = (all.rows || []).concat(j.rows || []);
+      if (!j.rows || j.rows.length < 200) break; }
+    return all; };
   const TOT = 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,subscribersLost,likes,comments,shares';
   const jobs = {
     ch: chP,
@@ -3042,11 +3048,12 @@ async function myFetch(cid) {
     src: R({ dimensions: 'insightTrafficSourceType', metrics: 'views,estimatedMinutesWatched', sort: '-views' }),
     age: R({ dimensions: 'ageGroup,gender', metrics: 'viewerPercentage' }),
     sub: R({ dimensions: 'subscribedStatus', metrics: 'views,estimatedMinutesWatched' }),
-    vid: R({ dimensions: 'video', metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,likes,comments,shares', sort: '-views', maxResults: 30 }),
+    // 動画ごとの数字：全部の動画（200本ずつページを分けて取る）
+    vid: RP({ dimensions: 'video', metrics: 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,likes,comments,shares', sort: '-views' }),
     // YouTube自身の分類（配信・ショート・動画）。長さやライブの記録から推測すると、プレミア公開や短い動画を間違えるため
-    ctLive: R({ dimensions: 'video', metrics: 'views', filters: 'creatorContentType==liveStream', sort: '-views', maxResults: 200 }),
-    ctShort: R({ dimensions: 'video', metrics: 'views', filters: 'creatorContentType==shorts', sort: '-views', maxResults: 200 }),
-    ctVod: R({ dimensions: 'video', metrics: 'views', filters: 'creatorContentType==videoOnDemand', sort: '-views', maxResults: 200 }),
+    ctLive: RP({ dimensions: 'video', metrics: 'views', filters: 'creatorContentType==liveStream', sort: '-views' }),
+    ctShort: RP({ dimensions: 'video', metrics: 'views', filters: 'creatorContentType==shorts', sort: '-views' }),
+    ctVod: RP({ dimensions: 'video', metrics: 'views', filters: 'creatorContentType==videoOnDemand', sort: '-views' }),
   };
   const keys = Object.keys(jobs), res = await Promise.allSettled(Object.values(jobs)), g = {}, errs = [];
   keys.forEach((k, i) => res[i].status === 'fulfilled' ? g[k] = res[i].value : /^ct/.test(k) ? null : errs.push(k + '：' + res[i].reason.message));
@@ -3068,8 +3075,13 @@ async function myFetch(cid) {
   const vr = g.vid ? myRows(g.vid) : [];
   if (vr.length) {
     try {
-      const j = await myApi(tok, 'https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,liveStreamingDetails,status&id=' + vr.map(v => v.video).join(','));
-      const info = Object.fromEntries((j.items || []).map(x => [x.id, x]));
+      const info = {};
+      // 50本ずつ・5回分ずつ同時に
+      const chunks = []; for (let i = 0; i < vr.length; i += 50) chunks.push(vr.slice(i, i + 50));
+      for (let i = 0; i < chunks.length; i += 5) {
+        MY.busy = `動画の情報を取得中…（${Math.min((i + 5) * 50, vr.length)}／${vr.length}本）`; render();
+        await Promise.all(chunks.slice(i, i + 5).map(async c => { const j = await myApi(tok, 'https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,liveStreamingDetails,status&id=' + c.map(v => v.video).join(','));
+          (j.items || []).forEach(x => { info[x.id] = x; }); })); }
       // 公開の状態：非公開・限定公開は出さない。メンバー限定（タイトルに「メン限」など）は残す
       const MEM = /メン限|メンバー限定|メンバーシップ限定|members.?only/i;
       d.videos = vr.map(v => { const x = info[v.video]; const dur = x ? isoDur(x.contentDetails.duration) : 0;
@@ -3080,7 +3092,11 @@ async function myFetch(cid) {
         .filter(v => v.priv !== 'gone' && v.priv !== 'private' && (v.priv !== 'unlisted' || v.mem));  // gone＝削除済み
     } catch (e) { errs.push('動画の情報：' + e.message); }
     // 配信の最高同接・平均同接（YouTubeの決まりで、1本ずつ頼む必要がある。5本ずつ同時に）
-    const st = d.videos.filter(v => v.fmt === 'stream').slice(0, 20);
+    // 同接は新しい配信30本（前に取った同接は使い回す。終わった配信の同接は変わらないため）
+    const oldV = Object.fromEntries(((myCache(cid) || {}).videos || []).filter(v => v.pcv != null).map(v => [v.id, v]));
+    d.videos.forEach(v => { const o = oldV[v.id]; if (o && Date.now() - Date.parse(v.at) > 3 * DAY) { v.pcv = o.pcv; v.acv = o.acv; } });
+    MY.busy = '配信の同接を取得中…'; render();
+    const st = d.videos.filter(v => v.fmt === 'stream' && v.pcv == null).sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0)).slice(0, 30);
     let ccErr = '';
     for (let i = 0; i < st.length; i += 5) {
       await Promise.all(st.slice(i, i + 5).map(async v => {
@@ -3119,11 +3135,20 @@ async function myReach(tok, start, end) {
   const byDay = {}; list.forEach(r => { const k = r.startTime.slice(0, 10); if (!byDay[k] || r.createTime > byDay[k].createTime) byDay[k] = r; });
   const out = { imp: 0, clk: 0, byVid: {}, days: 0, daily: {} };
   const reps = Object.values(byDay);
+  // レポートのファイルはブラウザから直接ダウンロードできない（YouTubeの決まり）ので、保管庫に代わりにダウンロードしてもらう
+  const sid = mySid(MY.sel), texts = {};
+  if (sid) for (let i = 0; i < reps.length; i += 30) {
+    const part = reps.slice(i, i + 30), r = await myVault({ op: 'reach', sid, cid: MY.sel, urls: part.map(x => x.downloadUrl) });
+    if (r.error) throw new Error('インプレッションのレポートを読み込めませんでした（' + r.error + '）');
+    part.forEach((x, k) => { texts[x.downloadUrl] = (r.texts || [])[k] || ''; });
+  }
   for (let i = 0; i < reps.length; i += 6) {
     await Promise.all(reps.slice(i, i + 6).map(async rp => {
-      const r = await fetch(rp.downloadUrl, { headers: { Authorization: 'Bearer ' + tok.t } });
-      if (!r.ok) throw new Error('インプレッションのレポートを読み込めませんでした（' + r.status + '）');
-      const lines = (await r.text()).trim().split(/\r?\n/), h = lines.shift().split(',');
+      let txt = texts[rp.downloadUrl];
+      if (txt == null) { const r = await fetch(rp.downloadUrl, { headers: { Authorization: 'Bearer ' + tok.t } });
+        if (!r.ok) throw new Error('インプレッションのレポートを読み込めませんでした（' + r.status + '）'); txt = await r.text(); }
+      if (!txt) return;
+      const lines = txt.trim().split(/\r?\n/), h = lines.shift().split(',');
       const iv = h.indexOf('video_id'), ii = h.indexOf('video_thumbnail_impressions'), ic = h.indexOf('video_thumbnail_impressions_ctr'), id = h.indexOf('date');
       if (ii < 0) throw new Error('インプレッションの列が見つかりませんでした');
       lines.forEach(l => { const c = l.split(','), imp = +c[ii] || 0; let ctr = +c[ic] || 0; if (ctr > 1) ctr /= 100;
@@ -3317,7 +3342,8 @@ function myContentHtml(cid, d, pub) {
     ${top.map(([v, x], i) => `<button class="w-full flex items-center gap-2 py-1.5 border-t border-line text-left clickable" data-myeval="${esc(v.id)}"><span class="w-6 text-center font-black ${i < 3 ? 'text-amber' : 'text-muted'}">${i + 1}</span><img src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg" class="w-16 rounded shrink-0" alt="" loading="lazy"><span class="flex-1 min-w-0 text-xs line-clamp-2">${MY_FMT[v.fmt] ? MY_FMT[v.fmt].split(' ')[0] + ' ' : ''}${esc(v.title)}</span><span class="font-mono font-bold text-sm shrink-0">${rk[2](x)}</span></button>`).join('') || '<p class="text-xs text-muted">まだありません</p>'}</div>`;
   return `${perBar}<div class="flex items-center gap-1.5 mb-3 scroll-x -mx-3 px-3 sm:mx-0 sm:px-0 sm:flex-wrap"><span class="text-xs font-bold text-muted mr-1 shrink-0">🎞 形式</span>${chips}</div>${rank}
     <p class="text-[11px] text-muted mb-2">押すと、その1本のAIの評価（点数・良かった点・課題・タイトル案・サムネ・説明欄の直し方）が見られます。</p>
-    <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">${list.map(card).join('') || '<p class="text-sm text-muted">まだありません</p>'}</div>`;
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">${list.slice(0, MY.cmore || 60).map(card).join('') || '<p class="text-sm text-muted">まだありません</p>'}</div>
+    ${list.length > (MY.cmore || 60) ? `<button class="w-full mt-3 border border-line bg-panel rounded-xl py-2.5 text-sm font-bold" data-mycmore>さらに60本表示（${MY.cmore || 60} / ${list.length}本）</button>` : `<p class="text-[11px] text-muted mt-2">${list.length}本を表示しています</p>`}`;
 }
 
 // ---- 1本ごとの評価 ----
@@ -3434,10 +3460,10 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-8';
+const MY_VER = '11/11-9';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
-const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ' };
-const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明' };
+const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ', SHORTS_FEED:'ショートのフィード', IMMERSIVE_LIVE_FEED:'ライブのフィード' };
+const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明', DIRECT_SYSTEM_ACTIVITY_DIALOG:'スマホの共有メニュー', FACEBOOK_MESSENGER:'Facebookメッセンジャー', INSTAGRAM:'Instagram', TIKTOK:'TikTok' };
 const MY_METRIC = { views:['再生回数', '回'], estimatedMinutesWatched:['総再生時間（分）', '分'], subs:['登録者の増減', '人'], likes:['高評価', '件'], comments:['コメント', '件'] };
 const myRegion = (() => { try { const dn = new Intl.DisplayNames(['ja'], { type: 'region' }); return c => dn.of(c) || c; } catch (e) { return c => c; } })();
 const mySum = (arr, k) => arr.reduce((s, x) => s + (+x[k] || 0), 0);
@@ -3815,6 +3841,17 @@ async function myPromptText(vid, forAI = false) {
     d.geo && d.geo.length ? '- 国：' + d.geo.slice(0, 6).map(x => `${myRegion(x.country)}(${x.views})`).join('、') : '',
     d.shr && d.shr.length ? '- 共有された先：' + d.shr.map(x => `${MY_SHARE[x.sharingService] || x.sharingService}(${x.shares})`).join('、') : '', '');
   const allV = myVids(d, pub), images = [];
+  // 今の調子：日ごとの数字から、直近28日・90日をまとめる（全期間の合計だけだと、昔の数字に引っぱられるため）
+  if (isRev && d && d.daily && d.daily.length > 30) {
+    const sumD = n => { const a = d.daily.slice(-n); return { v: a.reduce((s, x) => s + (+x.views || 0), 0), h: Math.round(a.reduce((s, x) => s + (+x.estimatedMinutesWatched || 0), 0) / 60), sub: a.reduce((s, x) => s + (+x.subscribersGained || 0) - (+x.subscribersLost || 0), 0) }; };
+    const r28 = sumD(28), r90 = sumD(90), p28 = (() => { const a = d.daily.slice(-56, -28); return a.reduce((s, x) => s + (+x.views || 0), 0); })();
+    const now = Date.now(), cntP = (n, f) => allV.filter(x => x.fmt === f && now - Date.parse(x.at) < n * DAY).length;
+    L.push('# 今の調子（直近の数字。分析ではこちらを重視してください）',
+      `- 直近28日：再生 ${r28.v}（その前の28日は ${p28}）／総再生時間 ${r28.h}時間／登録 ${r28.sub >= 0 ? '+' : ''}${r28.sub}`,
+      `- 直近90日：再生 ${r90.v}／総再生時間 ${r90.h}時間／登録 ${r90.sub >= 0 ? '+' : ''}${r90.sub}`,
+      `- 直近90日に出した数（分かる範囲）：配信 ${cntP(90, 'stream')}本・ショート ${cntP(90, 'short')}本・動画 ${cntP(90, 'video')}本`,
+      `- 今日の日付：${new Date().toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric' })}（下の一覧の日付は年まで書いてあります。何年も前のものは「昔のもの」として扱ってください）`, '');
+  }
   if (isRev) {
     const ch = (d && d.desc) || (pub && pub.desc) || '', th = (pub && pub.th) || (d && d.th) || '';
     // AIに送るとき：アイコンと、よく見られた4本・新しい4本のサムネを画像で添付する
@@ -3822,11 +3859,18 @@ async function myPromptText(vid, forAI = false) {
     if (forAI) { if (th) images.push(th); picks.forEach(x => images.push(`https://i.ytimg.com/vi/${x.id}/mqdefault.jpg`)); }
     L.push('# チャンネルの概要欄', ch || '（取得できませんでした。YouTubeの概要欄をここに貼り付けてください）', '', '# アイコン', forAI && th ? '- 添付した1枚目の画像がアイコンです' : th ? '- 画像：' + th : '- （アイコンの画像を添付してください）', '');
     if (forAI && picks.length) L.push('# 添付したサムネイル（2枚目から順に）', ...picks.map((x, i) => `- ${i + 2}枚目：${x.id}｜${x.title}｜再生 ${x.views}`), '');
-    L.push('# 投稿したコンテンツ（すべて）', ...allV.map(x => `- ${(MY_FMT[x.fmt] || '').replace(/^\S+ /, '')}｜${x.at && x.at.length > 10 ? new Date(x.at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' }) : ''}｜${x.title}｜${x.dur ? mySec(x.dur) : ''}｜再生 ${x.views}${x.likes != null ? '｜高評価 ' + x.likes : ''}${x.imp != null ? '｜インプ ' + x.imp + '｜CTR ' + myF1(x.ctr) + '%' : ''}${x.avp != null ? '｜平均視聴率 ' + myF1(x.avp) + '%' : ''}${x.pcv != null ? '｜最高同接 ' + x.pcv : ''}｜サムネ https://i.ytimg.com/vi/${x.id}/mqdefault.jpg`), '');
+    // 全部の動画をまとめた数（年ごと・形式ごと）と、一覧は「新しい40本＋よく見られた20本」にしぼる（全部だとAIに渡しきれないため）
+    const byNewAll = [...allV].sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
+    const top20 = [...allV].sort((a, b) => (b.views || 0) - (a.views || 0)).filter(x => !byNewAll.slice(0, 40).includes(x)).slice(0, 20);
+    const byNew = [...byNewAll.slice(0, 40), ...top20].sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
+    const yrs = {}; allV.forEach(x => { const y = (x.at || '').slice(0, 4) || '不明'; const o = yrs[y] = yrs[y] || { stream: [0, 0], short: [0, 0], video: [0, 0] }; if (o[x.fmt]) { o[x.fmt][0]++; o[x.fmt][1] += x.views || 0; } });
+    L.push(`# 投稿したコンテンツのまとめ（数字が取れた ${allV.length}本。年ごと：本数／再生の合計）`, ...Object.keys(yrs).sort().reverse().map(y => `- ${y}年：` + ['stream', 'short', 'video'].map(f => `${MY_FMT[f].replace(/^\S+ /, '')} ${yrs[y][f][0]}本／${yrs[y][f][1]}回`).join('、')), '');
+    L.push('# 投稿したコンテンツ（新しい40本と、よく見られた20本。新しい順）', ...byNew.map(x => `- ${(MY_FMT[x.fmt] || '').replace(/^\S+ /, '')}｜${x.at && x.at.length > 10 ? new Date(x.at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year:'numeric', month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' }) : ''}｜${x.title}｜${x.dur ? mySec(x.dur) : ''}｜再生 ${x.views}${x.likes != null ? '｜高評価 ' + x.likes : ''}${x.imp != null ? '｜インプ ' + x.imp + '｜CTR ' + myF1(x.ctr) + '%' : ''}${x.avp != null ? '｜平均視聴率 ' + myF1(x.avp) + '%' : ''}${x.pcv != null ? '｜最高同接 ' + x.pcv : ''}｜サムネ https://i.ytimg.com/vi/${x.id}/mqdefault.jpg`), '');
     // ログイン中なら、新しい8本の説明欄を取ってきて入れる
     let descs = []; const tk = MY.tokens[cid];
-    if (tk && tk.exp > Date.now() && allV.length) { try { const j = await myApi(tk, 'https://www.googleapis.com/youtube/v3/videos?part=snippet&id=' + allV.slice(0, 8).map(x => x.id).join(','));
-      descs = (j.items || []).map(x => '## ' + x.snippet.title + '\n' + ((x.snippet.description || '').slice(0, 700) || '（空）') + '\nタグ：' + ((x.snippet.tags || []).slice(0, 15).join('、') || 'なし')); } catch (e) {} }
+    if (tk && tk.exp > Date.now() && allV.length) { try { const ids8 = [...allV].sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0)).slice(0, 8).map(x => x.id);
+      const j = await myApi(tk, 'https://www.googleapis.com/youtube/v3/videos?part=snippet&id=' + ids8.join(','));
+      descs = (j.items || []).sort((a, b) => ids8.indexOf(a.id) - ids8.indexOf(b.id)).map(x => '## ' + x.snippet.title + '（' + new Date(x.snippet.publishedAt).toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo' }) + '）' + '\n' + ((x.snippet.description || '').slice(0, 700) || '（空）') + '\nタグ：' + ((x.snippet.tags || []).slice(0, 15).join('、') || 'なし')); } catch (e) {} }
     L.push('# 説明欄', ...(descs.length ? ['（新しい順に' + descs.length + '本）', ...descs] : ['（いくつかの動画の説明欄をここに貼り付けてください。毎回同じ部分と、回ごとに変えている部分が分かると良いです）']), '');
   } else L.push('# ほかの配信・動画（比較用）', ...allV.slice(0, 15).map(x => `- ${MY_FMT[x.fmt] || ''} ${x.title}｜再生 ${x.views}${x.likes != null ? '｜高評価 ' + x.likes : ''}${x.avp != null ? '｜平均視聴率 ' + myF1(x.avp) + '%' : ''}${x.ctr != null ? '｜CTR ' + myF1(x.ctr) + '%' : ''}`), '');
   if (base && base.n) L.push('# 同じ規模で「いま伸びている」VTuberとの比較（VTrend Base調べ・登録者1万人未満・同じ形式・' + base.n + '本）', `- 再生÷登録者の中央値：${base.ratio != null ? (base.ratio * 100).toFixed(1) + '%' : '不明'}`, `- 高評価率の中央値：${base.like != null ? (base.like * 100).toFixed(1) + '%' : '不明'}`, '');
@@ -3882,7 +3926,8 @@ function myClick(t, d) {
     return true;
   }
   if (d.myrank) { MY.rank = d.myrank; render(); return true; }
-  if (d.mycfmt) { MY.cfmt = d.mycfmt; render(); return true; }
+  if (d.mycfmt) { MY.cfmt = d.mycfmt; MY.cmore = 60; render(); return true; }
+  if (d.mycmore !== undefined) { MY.cmore = (MY.cmore || 60) + 60; render(); return true; }
   if (d.mycper) { MY.cper = d.mycper; render(); return true; }
   if (d.mymetric) { MY.metric = d.mymetric; render(); return true; }
   if (d.myvsort) { MY.vsort = d.myvsort; render(); return true; }
@@ -3951,7 +3996,7 @@ $$('.tab:not(.mytab)').forEach(t => t.onclick = () => { S.tab = t.dataset.tab; S
 let qT; $('#q').addEventListener('input', e => { clearTimeout(qT); qT = setTimeout(() => { S.q = e.target.value.trim(); _titleIdx = null; S.chMore = 50; render(); }, 150); });
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-goto],[data-close],#mBack,[data-copy],[data-genre],[data-format],[data-cap],[data-kwsrc],[data-kwgenre],[data-kwformat],[data-kwperiod],[data-cttab],[data-arch],[data-archid],[data-more],[data-kcat],[data-tview],[data-chmore],[data-chan],[data-kback],[data-kopen],[data-tok],[data-clipview],[data-cliprange],[data-clipfmt],[data-clipch],[data-gmode],[data-ggenre],[data-cgenre],[data-game],[data-classic],[data-vid],[data-mytab],[data-myacct],[data-mylogin],[data-mydays],[data-myvid],[data-myprompt],[data-mydel],[data-myopen],[data-mymove],[data-myurladd],[data-myprofuse],[data-myrefresh],[data-mysetup],[data-myview],[data-mycfmt],[data-myeval],[data-myrank],[data-myrefadd],[data-myrefdel],[data-mycper],[data-mylogout],[data-mymetric],[data-myvsort]');
+  const t = e.target.closest('[data-goto],[data-close],#mBack,[data-copy],[data-genre],[data-format],[data-cap],[data-kwsrc],[data-kwgenre],[data-kwformat],[data-kwperiod],[data-cttab],[data-arch],[data-archid],[data-more],[data-kcat],[data-tview],[data-chmore],[data-chan],[data-kback],[data-kopen],[data-tok],[data-clipview],[data-cliprange],[data-clipfmt],[data-clipch],[data-gmode],[data-ggenre],[data-cgenre],[data-game],[data-classic],[data-vid],[data-mytab],[data-myacct],[data-mylogin],[data-mydays],[data-myvid],[data-myprompt],[data-mydel],[data-myopen],[data-mymove],[data-myurladd],[data-myprofuse],[data-mycmore],[data-myrefresh],[data-mysetup],[data-myview],[data-mycfmt],[data-myeval],[data-myrank],[data-myrefadd],[data-myrefdel],[data-mycper],[data-mylogout],[data-mymetric],[data-myvsort]');
   if (!t) return;
   const d = t.dataset;
   if (myClick(t, d)) return;
