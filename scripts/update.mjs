@@ -35,6 +35,8 @@ const FORMATS = [
   { id: 'short',  extra: { videoDuration: 'short' },  sfx: ' shorts' }, // 3分以内をショート扱い
 ];
 const VPARTS = 'snippet,statistics,contentDetails,liveStreamingDetails';
+// 配信かどうか：プレミア公開（歌ってみた・MVなど）にも liveStreamingDetails が付くので、公開済みで10分未満のものは配信にしない
+const isLive = (it, dur) => !!(it && it.liveStreamingDetails) && !(it.snippet && it.snippet.liveBroadcastContent === 'none' && dur > 0 && dur < 600);
 const isoDur = s => { const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(s || '') || []; return (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0); };
 const now = Date.now();
 const day = new Date(now + 9 * 3600e3).toISOString().slice(0, 10); // 日本時間の日付
@@ -298,7 +300,7 @@ if (AI_ONLY) {
       comments: +(st.commentCount || 0),
       published: it.snippet.publishedAt,
       dur: isoDur(it.contentDetails && it.contentDetails.duration),
-      stream: !!lsd,
+      stream: isLive(it, isoDur(it.contentDetails && it.contentDetails.duration)),
       live: lsd && lsd.concurrentViewers ? +lsd.concurrentViewers : null,
       lang: it.snippet.defaultAudioLanguage || it.snippet.defaultLanguage || '',
     };
@@ -398,7 +400,7 @@ async function channelSteps(subsNow) {
       const items = (j.items || []).filter(it => it.snippet && it.snippet.liveBroadcastContent === 'none').map(it => {
         const st = it.statistics || {};
         return { id: it.id, t: String(it.snippet.title || '').slice(0, 90), v: +(st.viewCount || 0), l: +(st.likeCount || 0), c: +(st.commentCount || 0),
-          p: it.snippet.publishedAt, dur: isoDur(it.contentDetails && it.contentDetails.duration), stream: !!it.liveStreamingDetails,
+          p: it.snippet.publishedAt, dur: isoDur(it.contentDetails && it.contentDetails.duration), stream: isLive(it, isoDur(it.contentDetails && it.contentDetails.duration)),
           sh: (prev.videos && prev.videos[it.id] && prev.videos[it.id].sh) ?? (videos[it.id] && videos[it.id].sh) ?? null };
       });
       fetched.push([id, items]);
@@ -815,7 +817,7 @@ async function memberSteps() {
           th: ((c.snippet.thumbnails || {}).default || {}).url || '', desc: c.snippet.description || '',
           subs: c.statistics.hiddenSubscriberCount ? null : +c.statistics.subscriberCount, vcount: +c.statistics.videoCount || 0,
           videos: (vj.items || []).filter(v => v.snippet.liveBroadcastContent === 'none').map(v => { const dur = isoDur(v.contentDetails.duration), live = v.liveStreamingDetails;
-            return { id: v.id, fmt: live ? 'stream' : dur <= 180 ? 'short' : 'video', title: v.snippet.title, at: (live && live.actualStartTime) || v.snippet.publishedAt, dur,
+            return { id: v.id, fmt: isLive(v, dur) ? 'stream' : dur <= 180 ? 'short' : 'video', title: v.snippet.title, at: (live && live.actualStartTime) || v.snippet.publishedAt, dur,
               views: +v.statistics.viewCount || 0, likes: v.statistics.likeCount != null ? +v.statistics.likeCount : null }; }) };
       } catch (e) { logErr(`member channel ${m.name}`, e); }
       for (const v of vj.items || []) {
@@ -823,7 +825,7 @@ async function memberSteps() {
         if (v.snippet.liveBroadcastContent !== 'none' || dur < 600) continue; // 配信中・予定・10分未満は対象外
         if (/メン限|メンバー限定|members only/i.test(v.snippet.title)) continue; // メンバー限定はAIが見られない
         const x = myDeep[v.id] = myDeep[v.id] || { cid: m.cid, name: m.name, chunks: Math.ceil(dur / MY_CHUNK), done: 0, seg: [], mom: [] };
-        Object.assign(x, { title: v.snippet.title, dur, at: (live && live.actualStartTime) || v.snippet.publishedAt, stream: !!live, views: +v.statistics.viewCount || 0, likes: +v.statistics.likeCount || 0 });
+        Object.assign(x, { title: v.snippet.title, dur, at: (live && live.actualStartTime) || v.snippet.publishedAt, stream: isLive(v, dur), views: +v.statistics.viewCount || 0, likes: +v.statistics.likeCount || 0 });
         list.push(v.id);
       }
     } catch (e) { logErr(`member list ${m.name}`, e); }
