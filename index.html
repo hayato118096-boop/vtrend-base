@@ -2939,12 +2939,17 @@ async function myVaultPull(cid) {
   try {
     const r = await myVault({ op: 'pull', sid, cid }); if (r.error || _profTimer[cid]) return;
     let changed = false;
-    const local = myGet('vtb_my_prof_' + cid, null);
+    const local = myGet('vtb_my_prof_' + cid, null), synced = myGet('vtb_my_profsrv_' + cid, 0);
     if (r.prof && r.prof.prof) {
       if (JSON.stringify(local) !== JSON.stringify(r.prof.prof)) {
-        if (local) mySet('vtb_my_prof_bak_' + cid, local);   // 念のため、この端末にあった内容を控えておく
-        mySet('vtb_my_prof_' + cid, r.prof.prof); changed = true;
-      }
+        if (local && !synced) {
+          // この端末で、保管庫とつながる前に入力した内容がある：勝手に上書きせず、どちらを使うか選んでもらう
+          MY.profConflict = MY.profConflict || {}; MY.profConflict[cid] = { server: r.prof }; changed = true;
+        } else {
+          if (local) mySet('vtb_my_prof_bak_' + cid, local);   // 念のため、この端末にあった内容を控えておく
+          mySet('vtb_my_prof_' + cid, r.prof.prof); mySet('vtb_my_profsrv_' + cid, r.prof.at); changed = true;
+        }
+      } else mySet('vtb_my_profsrv_' + cid, r.prof.at);
     } else if (local) myProfPush(cid, 0);   // 保管庫がまだ空なら、この端末の入力を預ける
     const ev = myGet('vtb_my_eval_' + cid, null);
     if (r.eval && r.eval.review && (!ev || ev.at !== r.eval.at)) { mySet('vtb_my_eval_' + cid, r.eval); changed = true; }
@@ -2954,10 +2959,10 @@ async function myVaultPull(cid) {
 }
 // 入力したら、少し待ってから保管庫に保存
 function myProfPush(cid, delay = 1200) {
-  if (!mySid(cid)) return;
+  if (!mySid(cid) || (MY.profConflict && MY.profConflict[cid])) return;   // どちらを使うか選ぶまでは保管庫に送らない
   clearTimeout(_profTimer[cid]); MY.sync = 'saving'; mySyncShow();
   _profTimer[cid] = setTimeout(async () => {
-    try { const r = await myVault({ op: 'prof', sid: mySid(cid), cid, prof: myGet('vtb_my_prof_' + cid, {}) }); if (r.error) throw new Error(r.error); MY.sync = 'saved'; }
+    try { const r = await myVault({ op: 'prof', sid: mySid(cid), cid, prof: myGet('vtb_my_prof_' + cid, {}) }); if (r.error) throw new Error(r.error); MY.sync = 'saved'; mySet('vtb_my_profsrv_' + cid, r.at); }
     catch (e) { MY.sync = 'error'; }
     delete _profTimer[cid]; mySyncShow();
   }, delay);
@@ -3412,7 +3417,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-3';
+const MY_VER = '11/11-4';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明' };
@@ -3618,13 +3623,25 @@ const MY_PF = [
 ];
 function myProfHtml(cid) {
   // この端末でまだログインしていないときは、見本や古い入力を出さずにログインを案内（入力の食い違いを防ぐ）
-  if (MY_VAULT && !mySid(cid) && myOwnAcct(cid)) return `<div class="bg-panel border border-amber/50 rounded-2xl p-4 sm:p-5 glow mb-4">
+  // （この端末に入力が残っているときは、隠さずにそのまま出す）
+  if (MY_VAULT && !mySid(cid) && myOwnAcct(cid) && !myGet('vtb_my_prof_' + cid, null)) return `<div class="bg-panel border border-amber/50 rounded-2xl p-4 sm:p-5 glow mb-4">
     <div class="font-black text-base">🔒 この端末では、まだログインしていません</div>
     <p class="text-sm leading-relaxed mt-2">自己プロデュースの入力は保管庫に入っていて、ログインすると<b>ほかの端末で入力した内容がそのまま</b>出ます。ログインは端末ごとに最初の1回だけです。</p>
     <button class="mt-3 bg-neon text-white rounded-lg px-4 py-2.5 text-sm font-bold" data-mylogin="${esc(cid)}">Googleでログイン</button></div>`;
+  // 保管庫と、この端末の入力が違うとき：どちらを使うか選んでもらう
+  const cf = MY.profConflict && MY.profConflict[cid];
+  const brief = q => { const fs = MY_PF.flatMap(g => g[1]), n = fs.filter(([k]) => (q[k] || '').trim()).length;
+    return `<div class="text-[11px] text-muted">${n}/${fs.length} 入力済み${(q.refs || []).length ? '・参考チャンネル ' + q.refs.length + '件' : ''}</div>` + fs.filter(([k]) => (q[k] || '').trim()).slice(0, 3).map(([k, l]) => `<div class="text-[11px] mt-0.5"><b>${esc(l)}</b>：${esc(String(q[k]).slice(0, 40))}${String(q[k]).length > 40 ? '…' : ''}</div>`).join(''); };
+  const conflict = cf ? `<div class="bg-amber/10 border border-amber/60 rounded-2xl p-3 sm:p-4 mb-4">
+    <div class="font-black text-sm">⚠️ この端末の入力と、保管庫の入力が違います</div>
+    <p class="text-[11px] text-muted mt-1">どちらを使うか選んでください。選んだほうが保管庫に入り、どの端末でも同じ内容になります（選ばなかったほうも、この端末に控えとして残します）。</p>
+    <div class="grid sm:grid-cols-2 gap-2 mt-2">
+      <div class="bg-panel border border-line rounded-xl p-2.5"><div class="text-xs font-black mb-1">📱 この端末の入力</div>${brief(myGet('vtb_my_prof_' + cid, {}))}<button class="mt-2 w-full bg-neon text-white rounded-lg py-2 text-xs font-bold" data-myprofuse="local">この端末の内容を使う</button></div>
+      <div class="bg-panel border border-line rounded-xl p-2.5"><div class="text-xs font-black mb-1">☁️ 保管庫の入力（${esc(new Date(cf.server.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }))}）</div>${brief(cf.server.prof)}<button class="mt-2 w-full border border-neon/60 text-neon rounded-lg py-2 text-xs font-bold" data-myprofuse="server">保管庫の内容を使う</button></div>
+    </div></div>` : '';
   const p = myProf(cid), all = MY_PF.flatMap(g => g[1]), done = all.filter(([k]) => (p[k] || '').trim()).length;
   const f = ([k, l, ph]) => `<label class="block text-xs font-bold mt-2">${l}${(p[k] || '').trim() ? '' : ' <span class="text-amber font-normal">未記入</span>'}<textarea data-myprof="${k}" rows="2" class="mt-1 w-full bg-void border border-line rounded-lg p-2 text-xs font-normal" placeholder="${esc(ph)}">${esc(p[k] || '')}</textarea></label>`;
-  return `<div class="bg-panel border border-line rounded-xl p-3 sm:p-4 glow mb-4">
+  return conflict + `<div class="bg-panel border border-line rounded-xl p-3 sm:p-4 glow mb-4">
     <div class="flex flex-wrap items-baseline gap-2"><div class="font-black text-sm">📝 自己プロデュース（AIに伝える情報）</div><span class="text-[11px] font-bold ${done < all.length ? 'text-amber' : 'text-lime'}">${done}/${all.length} 入力済み</span><span class="text-[10px] text-muted">入力すると自動で保存されます</span><span id="mySync" class="text-[10px] font-bold ${(MY_SYNC[MY.sync] || [])[1] || ''}">${mySid(cid) ? (MY_SYNC[MY.sync] || [''])[0] : ''}</span></div>
     <p class="text-[11px] text-muted mt-2">ここに書いた内容と実際の数字を比べて、AIが「方針や目標がずれていないか」「入力の内容が今のままでいいか」も評価します。${mySid(cid) ? '<b class="text-lime">保管庫に保存するので、どの端末で開いても同じ内容です。</b>' : MY_VAULT ? '<b class="text-amber">今はこの端末だけに保存されます。このチャンネルでGoogleにログインすると、どの端末で開いても同じ内容になります。</b>' : 'この端末の中だけに保存されます。'}${MY_PUBLIC[cid] ? '<br>※ 一部は公開されている情報から仮に入れています。本人が書き直してください。' : ''}</p>
     ${MY_PF.map(([gt, fs, tip]) => `<div class="mt-3 pt-2 border-t border-line"><div class="text-xs font-black text-neon">${gt}</div>${tip ? `<div class="text-[11px] text-muted mt-0.5">💡 ${tip}</div>` : ''}<div class="grid md:grid-cols-2 gap-x-3">${fs.map(f).join('')}</div></div>`).join('')}
@@ -3860,6 +3877,13 @@ function myClick(t, d) {
   if (d.myopen) { MY.sel = d.myopen; MY.err = ''; mySet('vtb_my_sel', d.myopen); MY.view = 'review'; MY.evErr = ''; render(); window.scrollTo(0, 0); myPubRefresh(d.myopen); myVaultPull(d.myopen); myFetchIfOld(d.myopen); return true; }
   if (d.mymove) { const [cid, dir] = d.mymove.split(':'), a = myAccts(), i = a.findIndex(x => x.cid === cid), j = i + (+dir);
     if (i >= 0 && j >= 0 && j < a.length) { [a[i], a[j]] = [a[j], a[i]]; myAcctsSet(a); render(); } return true; }
+  // 保管庫とこの端末の入力が違うとき：選んだほうを使う
+  if (d.myprofuse) { const cid = MY.sel, cf = MY.profConflict && MY.profConflict[cid]; if (!cf) return true;
+    const local = myGet('vtb_my_prof_' + cid, {});
+    delete MY.profConflict[cid];
+    if (d.myprofuse === 'local') { mySet('vtb_my_prof_bak_' + cid, cf.server.prof); myProfPush(cid, 0); toast('この端末の内容を保管庫に入れました'); }
+    else { mySet('vtb_my_prof_bak_' + cid, local); mySet('vtb_my_prof_' + cid, cf.server.prof); mySet('vtb_my_profsrv_' + cid, cf.server.at); toast('保管庫の内容にしました'); }
+    render(); return true; }
   if (d.myurladd !== undefined) { myUrlAdd(($('#myUrlIn') || {}).value || ''); return true; }
   return false;
 }
@@ -3899,7 +3923,7 @@ $$('.tab:not(.mytab)').forEach(t => t.onclick = () => { S.tab = t.dataset.tab; S
 let qT; $('#q').addEventListener('input', e => { clearTimeout(qT); qT = setTimeout(() => { S.q = e.target.value.trim(); _titleIdx = null; S.chMore = 50; render(); }, 150); });
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-goto],[data-close],#mBack,[data-copy],[data-genre],[data-format],[data-cap],[data-kwsrc],[data-kwgenre],[data-kwformat],[data-kwperiod],[data-cttab],[data-arch],[data-archid],[data-more],[data-kcat],[data-tview],[data-chmore],[data-chan],[data-kback],[data-kopen],[data-tok],[data-clipview],[data-cliprange],[data-clipfmt],[data-clipch],[data-gmode],[data-ggenre],[data-cgenre],[data-game],[data-classic],[data-vid],[data-mytab],[data-myacct],[data-mylogin],[data-mydays],[data-myvid],[data-myprompt],[data-mydel],[data-myopen],[data-mymove],[data-myurladd],[data-myrefresh],[data-mysetup],[data-myview],[data-mycfmt],[data-myeval],[data-myrank],[data-myrefadd],[data-myrefdel],[data-mycper],[data-mylogout],[data-mymetric],[data-myvsort]');
+  const t = e.target.closest('[data-goto],[data-close],#mBack,[data-copy],[data-genre],[data-format],[data-cap],[data-kwsrc],[data-kwgenre],[data-kwformat],[data-kwperiod],[data-cttab],[data-arch],[data-archid],[data-more],[data-kcat],[data-tview],[data-chmore],[data-chan],[data-kback],[data-kopen],[data-tok],[data-clipview],[data-cliprange],[data-clipfmt],[data-clipch],[data-gmode],[data-ggenre],[data-cgenre],[data-game],[data-classic],[data-vid],[data-mytab],[data-myacct],[data-mylogin],[data-mydays],[data-myvid],[data-myprompt],[data-mydel],[data-myopen],[data-mymove],[data-myurladd],[data-myprofuse],[data-myrefresh],[data-mysetup],[data-myview],[data-mycfmt],[data-myeval],[data-myrank],[data-myrefadd],[data-myrefdel],[data-mycper],[data-mylogout],[data-mymetric],[data-myvsort]');
   if (!t) return;
   const d = t.dataset;
   if (myClick(t, d)) return;
