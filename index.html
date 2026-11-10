@@ -1957,7 +1957,20 @@ const mySet = (k, v) => { MYMEM[k] = v; store.set(k, v); };
 const myAccts = () => myGet('vtb_my_accts', null) || MY_SEED.map(x => ({ ...x }));
 const myAcctsSet = a => mySet('vtb_my_accts', a);
 // 公開の数字：サンプル → 毎日の自動更新（members.json のメンバー）→ この端末でログイン中のアカウントを使って取ったもの、の順で探す
-const myPub = cid => MY_PUBLIC[cid] || (S.data && S.data.mypub && S.data.mypub[cid]) || myGet('vtb_my_pub_' + cid, null);
+// サンプルがあるチャンネルも、毎日の自動更新のほうが新しければ、登録者・動画の再生などを新しい数字に差し替える（サンプルの一覧にない新しい動画は足す）
+let _pubCache = null;
+const myPub = cid => {
+  const base = MY_PUBLIC[cid], srv = S.data && S.data.mypub && S.data.mypub[cid];
+  if (!base) return srv || myGet('vtb_my_pub_' + cid, null);
+  if (!srv || (srv.asOf || '') <= (base.asOf || '')) return base;
+  if (!_pubCache || _pubCache.d !== S.data) _pubCache = { d: S.data, m: {} };
+  if (_pubCache.m[cid]) return _pubCache.m[cid];
+  const sv = Object.fromEntries((srv.videos || []).map(v => [v.id, v]));
+  const videos = base.videos.map(v => sv[v.id] ? { ...v, views: sv[v.id].views, likes: sv[v.id].likes } : v);
+  (srv.videos || []).forEach(v => { if (!videos.some(x => x.id === v.id)) videos.push(v); });
+  videos.sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
+  return _pubCache.m[cid] = { ...base, asOf: srv.asOf, subs: srv.subs ?? base.subs, vcount: srv.vcount || base.vcount, th: srv.th || base.th, desc: srv.desc || base.desc, videos };
+};
 const myLiveTok = () => Object.values(MY.tokens).find(t => t && t.exp > Date.now());
 const myAvatar = (a, cls = 'w-12 h-12') => { const th = a.th || (myPub(a.cid) || {}).th;
   return th ? `<img src="${esc(th)}" class="${cls} rounded-full border border-line shrink-0" alt="">` : `<span class="${cls} rounded-full bg-gradient-to-br from-neon to-pink text-white grid place-items-center font-black shrink-0">${esc((a.name || '?')[0])}</span>`; };
@@ -2780,7 +2793,8 @@ function myLogin(want, silent = false) {
     return openModal('ログインはサイトを直接開いて行います', `<p class="text-sm leading-relaxed mb-3">Googleのログインは、安全のため埋め込み（Wix）の中では開けません。下のサイトを直接開いて、「👤 マイチャンネル」からログインしてください。ログインした結果はそのブラウザに残るので、次からは直接開いたサイトで見られます。</p>${linkBox(MY_SITE + '#my', 'サイトを直接開く')}`);
   }
   const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
-  try { sessionStorage.setItem('vtb_my_login', JSON.stringify({ state, want, silent })); } catch (e) {}
+  // 戻ってきたときに、見ていた画面（アカウントとタブ）に戻せるよう覚えておく
+  try { sessionStorage.setItem('vtb_my_login', JSON.stringify({ state, want, silent, sel: MY.sel, view: MY.view })); } catch (e) {}
   const q = { client_id: MY_CLIENT_ID, redirect_uri: here, response_type: 'token', scope: MY_SCOPES, include_granted_scopes: 'true', state, prompt: silent ? 'none' : 'select_account' };
   const auto = myGet('vtb_my_auto', null); if (auto && auto.email) q.login_hint = auto.email;
   location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchParams(q);
@@ -2792,6 +2806,8 @@ function myLogout(cid) { delete MY.tokens[cid]; try { localStorage.removeItem('v
 function myAutoLogin() {
   const auto = myGet('vtb_my_auto', null); if (!auto || !auto.cid) return false;
   const t = MY.tokens[auto.cid]; if (t && t.exp > Date.now()) return false;
+  // つなぎ直すのは、前にログインしたアカウントを開いたときだけ（URLで追加した別のアカウントを見ているときはしない）
+  if (MY.sel !== auto.cid) return false;
   if (IN_FRAME || !MY_LOGIN_SITES.some(s => location.href.startsWith(s))) return false;
   try { if (sessionStorage.getItem('vtb_my_silent_tried')) return false; sessionStorage.setItem('vtb_my_silent_tried', '1'); } catch (e) { return false; }
   MY.busy = 'ログインをつなぎ直しています…'; myLogin(auto.cid, true); return true;
@@ -2806,6 +2822,7 @@ let myPending = null;
   history.replaceState(null, '', location.pathname + location.search);
   let saved = null; try { saved = JSON.parse(sessionStorage.getItem('vtb_my_login') || 'null'); sessionStorage.removeItem('vtb_my_login'); } catch (e) {}
   S.tab = 'my';
+  if (saved && saved.view && saved.view !== 'home' && saved.sel) { MY.sel = saved.sel; MY.view = saved.view; }
   // 自動でつなぎ直せなかったとき（Googleからログアウトしている等）は、エラーを出さずにいつものログインボタンを出す
   if (p.get('error') && saved && saved.silent) return;
   if (p.get('error')) { MY.err = p.get('error') === 'access_denied' ? 'ログインがキャンセルされたか、許可されませんでした' : 'ログインできませんでした（' + p.get('error') + '）'; return; }
@@ -3237,7 +3254,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/6-14';
+const MY_VER = '11/10-1';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明' };
