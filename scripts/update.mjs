@@ -749,6 +749,9 @@ async function gemini(parts, { search = false, tier = 'lite', lowMedia = false, 
     console.log(`AIモデル ${model} を外しました（${why}）${qids.length ? ' ' + qids.join(',') : ''}`);
     if (diag.switches == null) diag.switches = [];
     if (diag.switches.length < 20) diag.switches.push(`${model}（${why}: ${qids.join(',') || '-'}／${msg.slice(0, 200)}）`);
+    // 原因を調べられるよう、Googleから返ってきたエラーをそのまま残す（キーは含まれない）
+    if (diag.rawErrors == null) diag.rawErrors = [];
+    if (diag.rawErrors.length < 6) diag.rawErrors.push({ model, at: new Date().toISOString(), error: JSON.stringify(j.error).slice(0, 1500) });
   }
   throw new Error('AIの再試行の上限に達しました');
 }
