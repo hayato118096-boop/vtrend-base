@@ -142,14 +142,14 @@ const ago = d => {
   return rtf.format(Math.round(s/86400/30), 'month');
 };
 const ytSearchUrl = q => 'https://www.youtube.com/results?search_query=' + encodeURIComponent(q);
-// リンクは、スマホでもPCでも、Wixの埋め込みの中でも「押したら開く」にする。
-// 埋め込みの中で新しいタブがブロックされたときだけ、代わりにURLをコピーして知らせる（下の a[target=_blank] のクリック処理）
+// リンクは、スマホでもPCでも、Wixの埋め込みの中でも「押したら開く」にする（下の a[target=_blank] のクリック処理）
 const IN_FRAME = (() => { try { return window.top !== window.self; } catch (e) { return true; } })();
 const TOUCH = true;
-// Wixのページに「代わりに開く係」（Wix側のコード）があるときは、リンクをWixのページ自身に開いてもらう（Wixのページには制限がないのでYouTubeにも飛べる）
-const VTB_HOME = 'https://hayato118096-boop.github.io';
+// スマホ・タブレット（指で操作する画面）。Wixの中でもそのまま開けるので、Wixのページのボタンは使わない
+const IS_PHONE = (() => { try { return matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820; } catch (e) { return false; } })();
+// PCでWixのページに「代わりに開く係」（Wix側のコード）があるときは、リンクをWixのページ自身に開いてもらう（Wixのページには制限がないのでYouTubeにも飛べる）
 let WIX_RELAY = false;
-if (IN_FRAME) {
+if (IN_FRAME && !IS_PHONE) {
   window.addEventListener('message', e => {
     if (e.source === window.parent && e.data && e.data.vtbRelay && !WIX_RELAY) { WIX_RELAY = true; try { render(); } catch (x) {} }
   });
@@ -177,18 +177,9 @@ function spark(arr, w=72, h=22) {
   const pts = arr.map((v,i) => `${(i/(arr.length-1)*w).toFixed(1)},${(h - (v-min)/r*(h-4) - 2).toFixed(1)}`).join(' ');
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="${arr[arr.length-1] >= arr[0] ? '#16a34a' : '#db2777'}" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
 }
-/* リンク：スマホは開く、PCはURLとコピー */
+/* リンク：押せば開く（Wixの中のPCは、Wixのページの下に出る「▶ YouTubeで開く」から開く） */
 function linkBox(url, label = 'YouTubeで開く') {
-  const isYt = /^https:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//.test(url);
-  // Wixの中：YouTube本体はWixの決まりで開けない。動画は埋め込み用の再生ページで見られるので、そう書いて、URLのコピーを目立たせる
-  const open = IN_FRAME && isYt && !WIX_RELAY
-    ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="block text-center bg-neon text-white font-bold rounded-lg px-4 py-2.5 text-sm mb-1">▶ ${/watch\?v=|youtu\.be\/|\/shorts\//.test(url) ? 'ここで動画を見る' : esc(label)}</a>
-      <p class="text-[11px] text-amber font-bold mb-2">⚠️ Wixの中から開いた画面は、Wixの決まりでYouTube本体に入れません。YouTubeで開くときは、下の「📋 コピー」を押して、ブラウザのアドレスバーに貼り付けてください。</p>`
-    : TOUCH ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="block text-center bg-neon text-white font-bold rounded-lg px-4 py-2.5 text-sm mb-2">▶ ${esc(label)}</a>` : '';
-  return `${open}<div class="flex gap-2">
-    <input readonly value="${esc(url)}" class="flex-1 min-w-0 bg-void border border-line rounded-lg px-2 py-2 text-xs font-mono" data-selectall>
-    <button class="shrink-0 ${IN_FRAME && isYt && !WIX_RELAY ? 'bg-amber text-white' : TOUCH ? 'border border-line' : 'bg-neon text-white'} font-bold rounded-lg px-3 text-xs" data-copy="${esc(url)}" data-copymsg="URLをコピーしました。ブラウザのアドレスバーに貼り付けてください">📋 コピー</button>
-  </div>`;
+  return `<a href="${esc(url)}" target="_blank" rel="noopener" class="block text-center bg-neon text-white font-bold rounded-lg px-4 py-2.5 text-sm mb-2">▶ ${esc(label)}</a>`;
 }
 function miniLink(url, text) {
   return TOUCH
@@ -1751,7 +1742,7 @@ const GUIDE = [
     <ul class="list-disc pl-5 space-y-1 mt-2"><li>データは<b>毎日17時過ぎ（日本時間）に自動で更新</b>されます。タブの下の「更新 ○/○ ○:○○」が最終更新の時間です（緑の点＝正常）。</li>
     <li>自動更新が1日以上止まったときは、画面の上に「⚠️ データの自動更新が止まっています」と表示され、右上の点が黄色になります。</li>
     <li>上のタブで見たい情報を切り替えます：<b>トレンド／コンテンツ／検索ワード／切り抜き／AI分析／ナレッジ／使い方</b>。この使い方も同じ順番で説明しています。</li>
-    <li>スマホ・タブレット・PCのどれでも見られます。<b>リンクはスマホ・タブレットでは「▶ 開く」ボタンで直接開きます。PCは、サイトを直接開いているときは押せば開き、Wixの埋め込みの中で見ているときだけ「📋 コピー」でURLをコピー</b>します（埋め込みの中ではPCのリンクがブロックされるため）。</li>
+    <li>スマホ・タブレット・PCのどれでも見られます。<b>動画やリンクは押せばYouTubeで開きます。</b>PCでWixのページの中から見ているときは、押すと画面の下に「▶ YouTubeで開く」が出るので、それを押すと新しいタブで開きます。</li>
     <li>右上の<b>「👤 マイチャンネル」</b>を押すと、自分のチャンネルの分析に切り替わります（くわしくは次の章）。</li>
     <li>使っているデータ：YouTube（動画・チャンネル・検索候補）、Googleトレンド（日本）、Steam（新作ゲーム）。分析と記事づくりにはAI（Gemini）を使っています。</li></ul>` },
   { id:'g-my', icon:'👤', title:'マイチャンネル（自分のチャンネルの分析）', img:'', body:`
@@ -1759,8 +1750,8 @@ const GUIDE = [
     <h3 class="font-black mt-4 mb-1">ログイン</h3>
     <ul class="list-disc pl-5 space-y-1">
       <li>「Googleでログイン」を押して、自分のYouTubeチャンネルを持っているGoogleアカウントを選びます。インプレッション数・クリック率・同接・年齢層など、YouTube Studioと同じ数字が見られるようになります。</li>
-      <li>ログインは、サイトを直接開いたときも、Wixの埋め込みの中でもできます。埋め込みの中では、Googleのログインが小さな別の画面で開きます（ブロックされたら、アドレスバーの右から許可してください）。埋め込みの中のログインは約1時間で切れるので、切れたら「🔄 ログインをつなぎ直す」を押してください。</li>
-      <li>ログインの情報と数字は<b>その端末のブラウザの中だけ</b>に保存され、ほかの人には見えません。約1時間で切れますが、マイチャンネルを開くと自動でつなぎ直します。やめたいときは「ログアウト」。</li>
+      <li>ログインは、サイトを直接開いたときも、Wixのページの中でもできます。Wixの中では、Googleのログインが小さな別の画面で開きます（ブロックされたら、アドレスバーの右から許可してください）。</li>
+      <li>ログインは<b>一度すればずっと続きます</b>（自動でつなぎ直します）。<b>自己プロデュースの入力とAIの総評は、どの端末で開いても同じ内容</b>です。やめたいときは「ログアウト」。</li>
       <li>「👤 マイチャンネル」を押すと、まずアカウントを選ぶ画面が出ます。ここで「アカウントを選ぶ」「アカウントを追加」「設定（並び順・消去）」ができます。</li>
       <li>アカウントは<b>チャンネルのURL</b>だけでも追加できます（公開の数字だけ）。本人が<b>Googleでログイン</b>して追加すると、インプレッションや同接などすべての数字が見られます。</li>
       <li>インプレッション数とクリック率は、最初にログインしてから<b>1〜2日後</b>に見られるようになります（YouTubeが1日分ずつレポートを作るため）。</li></ul>
@@ -1806,7 +1797,7 @@ const GUIDE = [
     <ul class="list-disc pl-5 space-y-1 mt-2"><li><b>数字</b>：再生数・伸び率・1日あたりの再生（公開1日以内は1時間あたり）・高評価率・コメント率・長さ</li>
     <li><b>伸びた理由</b>：「登録者の○倍再生」「初速が強い」「高評価率が高い」「流行ワードに乗っている」「参加型・コラボなどの企画スタイル」「小規模チャンネルからのバズ」など。AIの分析があるときは「AI分析（推定）」も出ます。</li>
     <li><b>チャンネル登録者の推移</b>：毎日の記録から作った小さなグラフです。</li>
-    <li><b>リンク</b>：スマホ・タブレットは「▶ YouTubeで開く」、PCは「📋 コピー」でURLをコピーしてブラウザに貼り付けます。チャンネルのリンクもあります。</li>
+    <li><b>リンク</b>：「▶ YouTubeで開く」か、いちばん上の大きなサムネイルを押すとYouTubeで開きます。チャンネルのリンクもあります。</li>
     <li>詳細の中でさらに動画を開いたときは、左上の「← 戻る」で前の画面に戻れます。閉じるときは右上の「×」、画面の外側、PCの Esc キー、スマホの「戻る」です。</li></ul>` },
   { id:'g-content', icon:'🔥', title:'コンテンツ（流行アーカイブ・新作ゲーム・歴代名作）', img:'guide/archive.jpg', body:`
     <p>上のボタンで<b>📚 流行アーカイブ／🎮 新作ゲーム／👑 歴代名作</b>を切り替えます。</p>
@@ -1828,7 +1819,7 @@ const GUIDE = [
     <li>話題ワードをタップすると、流行の理由・経緯（AI分析つき）、どんな企画でやられているか、参考動画が見られます。</li>
     <li><b>🔍 YouTube検索候補</b>：YouTubeの検索窓に出てくる候補（よく検索されている言葉）です。ジャンル × 形式で切り替えられます（配信は「〜 配信」、ショートは「〜 shorts」で検索したときの候補）。</li>
     <li><b>🌐 Google急上昇</b>：日本のGoogleで急上昇しているワード（VTuber以外も含む全体）です。直近数日分を合わせて最大50件で、その日のものには「今日」と付きます。</li>
-    <li>📋 でワードをコピーできます。配信タイトルやタグを考えるときに便利です。YouTube検索候補は、スマホでは ▶ でそのまま検索、PCでは 🔗 で検索ページのURLをコピーできます。</li></ul>` },
+    <li>📋 でワードをコピーできます。配信タイトルやタグを考えるときに便利です。YouTube検索候補は、▶ でそのままYouTubeで検索できます。</li></ul>` },
   { id:'g-clip', icon:'✂️', title:'切り抜き', img:'guide/clip.jpg', body:`
     <p>VTuberの切り抜きチャンネル・切り抜き動画のランキングです（トレンドには出しません）。</p>
     <ul class="list-disc pl-5 space-y-1 mt-2"><li>「📺 チャンネル」「🎬 動画」を切り替えられます（それぞれ最大50件）。</li>
@@ -1866,7 +1857,7 @@ const GUIDE = [
     <div><dt class="font-bold">Q. 関係ない動画はどうやって外している？</dt><dd class="text-ink/80">A. 毎日の更新のときに、AI（Gemini）が動画のタイトルとチャンネル名を読んで、「VTuber本人の活動か」を1本ずつ判定しています。反応集・ニュース・切り抜き・海外の動画などは外れます。AIが判定していない動画は、キーワードのルールで外しています。</dd></div>
     <div><dt class="font-bold">Q. チャンネルランキングの登録者の増え方が「計測中」になっている</dt><dd class="text-ink/80">A. 登録者の推移は毎日記録していて、2日分以上の記録があるチャンネルから表示されます（28日分で判断）。それまでは、ほかの項目で点数を付けています。</dd></div>
     <div><dt class="font-bold">Q. チャンネルの注目動画が「まだ取得していません」になっている</dt><dd class="text-ink/80">A. YouTubeの無料枠に限りがあるため、ランキング上位になりそうなチャンネル（約300件）から順番に、毎日の更新で取得しています。</dd></div>
-    <div><dt class="font-bold">Q. PCでリンクを押しても開かない</dt><dd class="text-ink/80">A. 埋め込みページではPCのリンクがブロックされるため、「📋 コピー」でURLをコピーして、ブラウザのアドレス欄に貼り付けて開いてください。</dd></div>
+    <div><dt class="font-bold">Q. PCでWixのページの中から見ていて、リンクを押してもYouTubeが開かない</dt><dd class="text-ink/80">A. 押したあと、画面の下に出る「▶ YouTubeで開く」を押してください。新しいタブでYouTubeが開きます（Wixの決まりで、Wixのページの中から直接は開けないためです）。</dd></div>
     <div><dt class="font-bold">Q. 「AI分析（推定）」は正しい？</dt><dd class="text-ink/80">A. 数字とタイトルからAIが推測したものです。参考程度に見てください。</dd></div>
     <div><dt class="font-bold">Q. こんな機能が欲しい・ここが見づらい</dt><dd class="text-ink/80">A. 運営まで気軽に教えてください。どんどん反映していきます！</dd></div></dl>` },
 ];
@@ -3510,7 +3501,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-23';
+const MY_VER = '11/11-24';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ', SHORTS_FEED:'ショートのフィード', IMMERSIVE_LIVE_FEED:'ライブのフィード' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明', DIRECT_SYSTEM_ACTIVITY_DIALOG:'スマホの共有メニュー', FACEBOOK_MESSENGER:'Facebookメッセンジャー', INSTAGRAM:'Instagram', TIKTOK:'TikTok' };
@@ -4124,13 +4115,13 @@ if (IN_FRAME) document.addEventListener('click', e => {
   const a = e.target.closest && e.target.closest('a[target="_blank"]'); if (!a || !a.href) return;
   e.preventDefault();
   // Wixのページに開く係がいれば、Wixのページ自身にそのURLを開いてもらう（YouTubeのどのページにも飛べる）
-  // Wixのページに「▶ YouTubeで開く」ボタンが出る。それを押すと新しいタブで開く（Wixの画面はそのまま残る）
-  if (WIX_RELAY && /^https:\/\//.test(a.href)) { try { window.parent.postMessage({ vtbOpen: a.href }, '*'); toast('画面の下に出た「▶ YouTubeで開く」を押すと、新しいタブで開きます'); return; } catch (x) {} }
+  // Wixのページの下に「▶ YouTubeで開く」が出る。それを押すと新しいタブで開く（Wixの画面はそのまま残る）
+  if (WIX_RELAY && /^https:\/\//.test(a.href)) { try { window.parent.postMessage({ vtbOpen: a.href }, '*'); return; } catch (x) {} }
   // Wixの中から開いたタブはWixの制限を引き継ぐため、YouTubeの動画ページ（watch）は表示を断られる。
   // 動画は「埋め込み用の再生ページ」（制限があっても表示できる）で開く。チャンネル・検索のページは開けないのでURLをコピーする
   let u = a.href; const m = /^https:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|live\/)|youtu\.be\/)([\w-]{11})(?:[^#]*?[?&]t=(\d+))?/.exec(u);
   if (m) u = 'https://www.youtube.com/embed/' + m[1] + '?autoplay=1' + (m[2] ? '&start=' + m[2] : '');
-  else if (/^https:\/\/(www\.|m\.)?youtube\.com\//.test(u)) return copyText(u, 'YouTubeのこのページはWixの中からは開けないので、URLをコピーしました。新しいタブに貼り付けてください');
+  else if (/^https:\/\/(www\.|m\.)?youtube\.com\//.test(u)) return copyText(u, 'このページはここでは開けないので、URLをコピーしました。新しいタブに貼り付けてください');
   let w = null; try { w = window.open(u, '_blank'); } catch (x) {}
   if (w) { try { w.opener = null; } catch (x) {} } else copyText(a.href, 'このページの中では開けなかったので、URLをコピーしました。新しいタブに貼り付けてください');
 }, true);
