@@ -3501,7 +3501,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-20';
+const MY_VER = '11/11-21';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ', SHORTS_FEED:'ショートのフィード', IMMERSIVE_LIVE_FEED:'ライブのフィード' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明', DIRECT_SYSTEM_ACTIVITY_DIALOG:'スマホの共有メニュー', FACEBOOK_MESSENGER:'Facebookメッセンジャー', INSTAGRAM:'Instagram', TIKTOK:'TikTok' };
@@ -3599,7 +3599,7 @@ function myNumbersHtml(d) {
   g1.push(`<div class="grid grid-cols-2 md:grid-cols-4 gap-2">${r.imp != null ? stat('インプレッション数', fmt(r.imp), 'サムネが表示された回数') : myLock('インプレッション数', r.pending ? '準備中（初回から1〜2日）' : r.err ? '取得できず' : 'ログインで表示')}${stat('再生回数', fmt(t.views), myDiff(t.views, p.views))}</div>`);
   if (d.src && d.src.length) g1.push(myCard('🧭 どこから見に来たか', myBar(d.src.slice(0, 10).map(x => [MY_SRC[x.insightTrafficSourceType] || x.insightTrafficSourceType, x.views, pctOf(d.src)(x)])) + '<p class="text-[10px] text-muted mt-1">「ホーム・おすすめ」が多い＝YouTubeに広げてもらえている。「検索」が多い＝探して見に来てもらえている</p>'));
   if (d.kw && d.kw.length) g1.push(myCard('🔍 検索されたキーワード', myBar(d.kw.slice(0, 15).map(x => [x.insightTrafficSourceDetail, x.views, fmt(x.views) + '回'])) + '<p class="text-[10px] text-muted mt-1">この言葉をタイトル・説明欄の最初に入れると、もっと見つけてもらいやすくなります</p>', `上位${Math.min(15, d.kw.length)}件`));
-  if (d.rel && d.rel.length) g1.push(myCard('🔗 おすすめに出た元の動画', d.rel.slice(0, 8).map(x => `<div class="flex items-center gap-2 py-1 border-t border-line first:border-0"><img src="https://i.ytimg.com/vi/${esc(x.insightTrafficSourceDetail)}/mqdefault.jpg" class="w-16 rounded shrink-0" alt="" loading="lazy"><div class="min-w-0 flex-1 text-xs"><div class="line-clamp-2">${esc(x.title || x.insightTrafficSourceDetail)}</div><div class="text-[10px] text-muted">${x.own ? '自分の動画' : esc(x.ch || '')}</div></div><span class="font-mono text-xs shrink-0">${fmt(x.views)}回</span></div>`).join('') + '<p class="text-[10px] text-muted mt-1">ほかの人の動画が多い＝その人と同じ視聴者に届いている。参考チャンネルの候補になります</p>'));
+  if (d.rel && d.rel.length) g1.push(myCard('🔗 おすすめに出た元の動画', d.rel.slice(0, 8).map(x => `<a href="https://www.youtube.com/watch?v=${esc(x.insightTrafficSourceDetail)}" target="_blank" rel="noopener" class="flex items-center gap-2 py-1 border-t border-line first:border-0 hover:bg-neon/5 rounded"><img src="https://i.ytimg.com/vi/${esc(x.insightTrafficSourceDetail)}/mqdefault.jpg" class="w-16 rounded shrink-0" alt="" loading="lazy"><div class="min-w-0 flex-1 text-xs"><div class="line-clamp-2">${esc(x.title || x.insightTrafficSourceDetail)}</div><div class="text-[10px] text-muted">${x.own ? '自分の動画' : esc(x.ch || '')}</div></div><span class="font-mono text-xs shrink-0">${fmt(x.views)}回</span></a>`).join('') + '<p class="text-[10px] text-muted mt-1">ほかの人の動画が多い＝その人と同じ視聴者に届いている。参考チャンネルの候補になります</p>'));
   if (d.ext && d.ext.length) g1.push(myCard('🌐 外部サイト・アプリから', myBar(d.ext.slice(0, 8).map(x => [x.insightTrafficSourceDetail, x.views, fmt(x.views) + '回']))));
   if (d.loc && d.loc.length) g1.push(myCard('▶ 再生された場所', myBar(d.loc.map(x => [MY_LOC[x.insightPlaybackLocationType] || x.insightPlaybackLocationType, x.views, pctOf(d.loc)(x)]))));
   h += `<div id="my-g1">${myGroup('①', '見つけてもらう', 'YouTubeに表示されて、どこから来てもらえたか')}</div>${twoCol(g1)}`;
@@ -4098,6 +4098,18 @@ document.addEventListener('change', e => {
   render();
 });
 document.addEventListener('focusin', e => { if (e.target.matches('[data-selectall]')) e.target.select(); });
+// 動画のサムネイルは、どこに出ていても押せばYouTubeで開く（押すと別の画面が開くカードなどは、そちらを優先）
+const YT_CLICKABLE = 'a,button,input,label,.clickable,[data-vid],[data-myeval],[data-myvid],[data-kopen],[data-goto],[data-copy],[onclick]';
+document.addEventListener('click', e => {
+  const img = e.target.closest && e.target.closest('img[src*="i.ytimg.com/vi/"]'); if (!img || img.closest(YT_CLICKABLE)) return;
+  const id = (/\/vi\/([\w-]{11})\//.exec(img.src) || [])[1]; if (!id) return;
+  e.preventDefault();
+  // いったんリンクを作って押す（Wixの中のときの処理も、ふつうのリンクと同じように通るように）
+  const a = document.createElement('a'); a.href = 'https://www.youtube.com/watch?v=' + id; a.target = '_blank'; a.rel = 'noopener';
+  document.body.appendChild(a); a.click(); a.remove();
+});
+// 押せるサムネイルは、指の形のカーソルにする
+document.addEventListener('mouseover', e => { const img = e.target.closest && e.target.closest('img[src*="i.ytimg.com/vi/"]'); if (img && !img.style.cursor) { img.style.cursor = 'pointer'; if (!img.closest(YT_CLICKABLE)) img.title = img.title || 'YouTubeで開く'; } });
 // 埋め込み（Wix）の中：新しいタブで開いてみて、ブロックされたらURLをコピーする
 if (IN_FRAME) document.addEventListener('click', e => {
   const a = e.target.closest && e.target.closest('a[target="_blank"]'); if (!a || !a.href) return;
