@@ -3260,8 +3260,9 @@ const myVids = (d, pub) => {
   // 毎日の自動更新で見つけた新しい配信・動画（サンプルの一覧にないもの）を先頭に足す
   const auto = Object.entries((S.data && S.data.my) || {}).filter(([, x]) => x.cid === MY.sel && x.title).map(([id, x]) => ({ id, fmt: myFmtGuess(x.stream, x.dur), title: x.title, at: x.at, dur: x.dur, views: x.views, likes: x.likes }))
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
-  auto.forEach(v => { if (!out.some(x => x.id === v.id) && !(pub && pub.videos.some(x => x.id === v.id))) out.push(v); });
-  (pub ? pub.videos : []).forEach(v => { if (!out.some(x => x.id === v.id)) out.push({ ...v, fmt: v.fmt === 'stream' ? myFmtGuess(true, v.dur) : v.fmt }); });
+  const have = new Set(out.map(x => x.id)), pubIds = new Set(pub ? pub.videos.map(x => x.id) : []);
+  auto.forEach(v => { if (!have.has(v.id) && !pubIds.has(v.id)) { out.push(v); have.add(v.id); } });
+  (pub ? pub.videos : []).forEach(v => { if (!have.has(v.id)) { out.push({ ...v, fmt: v.fmt === 'stream' ? myFmtGuess(true, v.dur) : v.fmt }); have.add(v.id); } });
   // ログインして取ったYouTube自身の分類があれば、それを正とする（公開の数字・自動更新の分も直す）
   const ct = (d && d.ctype) || {};
   return out.map(v => ct[v.id] && ct[v.id] !== v.fmt ? { ...v, fmt: ct[v.id] } : v);
@@ -3471,7 +3472,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-10';
+const MY_VER = '11/11-11';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ', SHORTS_FEED:'ショートのフィード', IMMERSIVE_LIVE_FEED:'ライブのフィード' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明', DIRECT_SYSTEM_ACTIVITY_DIALOG:'スマホの共有メニュー', FACEBOOK_MESSENGER:'Facebookメッセンジャー', INSTAGRAM:'Instagram', TIKTOK:'TikTok' };
@@ -3599,7 +3600,11 @@ function myNumbersHtml(d) {
   // ===== ⑤ ファンになってもらう：登録者・新規 =====
   const g5 = [];
   g5.push(`<div class="grid grid-cols-2 md:grid-cols-4 gap-2">${stat('登録者の増減', net == null ? '—' : (net >= 0 ? '+' : '') + net + '人', pnet != null ? `前の期間 ${pnet >= 0 ? '+' : ''}${pnet}人` : '')}${stat('1,000再生あたりの登録', t.views && t.subscribersGained != null ? myF1(t.subscribersGained / t.views * 1000) + '人' : '—', '2〜5人がふつう')}</div>`);
-  if (days.length > 1) g5.push(myCard('🌱 登録者の増減（毎日）', `<div class="flex items-end gap-[2px] h-24 bg-void rounded-lg p-1">${days.map(x => { const g = x.subscribersGained || 0, l = x.subscribersLost || 0, mx = Math.max(1, ...days.map(y => Math.max(y.subscribersGained || 0, y.subscribersLost || 0))); return `<div class="flex-1 flex flex-col justify-end h-full" title="${esc(x.day)} +${g} −${l}"><div class="bg-lime rounded-t-sm" style="height:${g / mx * 70}%"></div><div class="bg-pink/70" style="height:${l / mx * 30}%"></div></div>`; }).join('')}</div><div class="text-[11px] mt-1"><span class="text-lime font-bold">■ 増えた ${t.subscribersGained ?? '—'}人</span>　<span class="text-pink font-bold">■ 減った ${t.subscribersLost ?? '—'}人</span></div>`));
+  // 長い期間は、週ごと・月ごとにまとめて棒にする（全期間だと何千本にもなって重いため）
+  const bkN = days.length > 730 ? 30 : days.length > 120 ? 7 : 1, bk = [];
+  for (let i = 0; i < days.length; i += bkN) { const a = days.slice(i, i + bkN); bk.push({ day: a[0].day + (bkN > 1 ? '〜' + a[a.length - 1].day : ''), g: a.reduce((s, x) => s + (x.subscribersGained || 0), 0), l: a.reduce((s, x) => s + (x.subscribersLost || 0), 0) }); }
+  const bkMx = Math.max(1, ...bk.map(y => Math.max(y.g, y.l)));
+  if (days.length > 1) g5.push(myCard('🌱 登録者の増減（' + (bkN === 30 ? '30日ごと' : bkN === 7 ? '週ごと' : '毎日') + '）', `<div class="flex items-end gap-[2px] h-24 bg-void rounded-lg p-1">${bk.map(x => `<div class="flex-1 flex flex-col justify-end h-full" title="${esc(x.day)} +${x.g} −${x.l}"><div class="bg-lime rounded-t-sm" style="height:${x.g / bkMx * 70}%"></div><div class="bg-pink/70" style="height:${x.l / bkMx * 30}%"></div></div>`).join('')}</div><div class="text-[11px] mt-1"><span class="text-lime font-bold">■ 増えた ${t.subscribersGained ?? '—'}人</span>　<span class="text-pink font-bold">■ 減った ${t.subscribersLost ?? '—'}人</span></div>`));
   const subTop = (d.videos || []).filter(v => v.subs > 0).sort((a, b) => b.subs - a.subs).slice(0, 5);
   if (subTop.length) g5.push(myCard('⭐ 登録につながった動画', subTop.map((v, i) => `<button class="w-full flex items-center gap-2 py-1.5 border-t border-line first:border-0 text-left clickable" data-myvid="${esc(v.id)}"><span class="w-5 text-center font-black text-amber">${i + 1}</span><img src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg" class="w-16 rounded shrink-0" alt="" loading="lazy"><span class="flex-1 min-w-0 text-xs line-clamp-2">${esc(v.title)}</span><span class="font-mono font-bold text-sm text-lime shrink-0">+${v.subs}</span></button>`).join('') + '<p class="text-[10px] text-muted mt-1">ここに入る動画が「チャンネルの入口」。同じ型をもう一度作るのが近道です</p>'));
   if (d.sub && d.sub.length) { const un = d.sub.find(x => x.subscribedStatus === 'UNSUBSCRIBED'), u = myPct(un ? un.views : 0, mySum(d.sub, 'views'));
@@ -3626,8 +3631,10 @@ function myNumbersHtml(d) {
     // 配信・ショート・動画を出した日（日本時間）に縦線の印
     const jday = t => new Date(Date.parse(t) + 9 * 3600e3).toISOString().slice(0, 10);
     const posts = myVids(d, myPub(MY.sel)).filter(v => v.at && Date.parse(v.at));
-    const marks = []; days.forEach((x, i) => { const ps = posts.filter(v => jday(v.at) === x.day); if (ps.length) marks.push({ i, fmt: ps[0].fmt, title: x.day.slice(5).replace('-', '/') + '：' + ps.map(v => v.title).join(' ／ ') }); });
-    const peakDay = days[vals.indexOf(Math.max(...vals))].day, peakPosts = posts.filter(v => jday(v.at) === peakDay);
+    // 日付ごとに先にまとめておく（毎日×全部の動画で探すと重いため）
+    const byDay = {}; posts.forEach(v => { (byDay[jday(v.at)] = byDay[jday(v.at)] || []).push(v); });
+    const marks = []; days.forEach((x, i) => { const ps = byDay[x.day]; if (ps) marks.push({ i, fmt: ps[0].fmt, title: x.day.slice(5).replace('-', '/') + '：' + ps.map(v => v.title).join(' ／ ') }); });
+    const peakDay = days[vals.indexOf(Math.max(...vals))].day, peakPosts = byDay[peakDay] || [];
     h += `<div id="my-g7">${myGroup('📈', '毎日の推移', '日ごとの変化と、よく見られている曜日')}</div>`;
     h += `<div class="grid lg:grid-cols-3 gap-3">
       <div class="lg:col-span-2">${myCard('毎日の数字', `<div class="flex flex-wrap gap-1.5 mb-2">${Object.entries(MY_METRIC).map(([k, [l]]) => `<button class="chip border border-line rounded-full px-2.5 py-0.5 text-[11px] font-bold" data-mymetric="${k}" aria-pressed="${m === k}">${l}</button>`).join('')}</div>
@@ -3644,11 +3651,13 @@ function myNumbersHtml(d) {
   if (d.videos.length) {
     const VS = { views: ['再生', v => v.views], ctr: ['クリック率', v => v.ctr], avp: ['平均視聴率', v => v.avp], pcv: ['最高同接', v => v.pcv], likes: ['高評価', v => v.likes], subs: ['登録', v => v.subs] };
     const vs = VS[MY.vsort] ? MY.vsort : 'views', list = d.videos.slice().sort((a, b) => (VS[vs][1](b) ?? -1) - (VS[vs][1](a) ?? -1));
-    const rows = list.map(v => `<tr class="border-t border-line clickable" data-myvid="${esc(v.id)}"><td class="py-1.5 pr-2 text-[11px] whitespace-nowrap">${MY_FMT[v.fmt] || ''}${v.mem ? ' 👑' : ''}</td><td class="py-1.5 pr-2"><div class="line-clamp-2 text-xs">${esc(v.title)}</div></td>
+    const shownN = MY.vmore || 50;
+    const rows = list.slice(0, shownN).map(v => `<tr class="border-t border-line clickable" data-myvid="${esc(v.id)}"><td class="py-1.5 pr-2 text-[11px] whitespace-nowrap">${MY_FMT[v.fmt] || ''}${v.mem ? ' 👑' : ''}</td><td class="py-1.5 pr-2"><div class="line-clamp-2 text-xs">${esc(v.title)}</div></td>
       <td class="py-1.5 pr-2 text-right font-mono text-xs">${fmt(v.views)}</td><td class="py-1.5 pr-2 text-right font-mono text-xs">${v.imp != null ? fmt(v.imp) : '—'}</td><td class="py-1.5 pr-2 text-right font-mono text-xs">${v.ctr != null ? myF1(v.ctr) + '%' : '—'}</td>
       <td class="py-1.5 pr-2 text-right font-mono text-xs">${myF1(v.avp)}%</td><td class="py-1.5 pr-2 text-right font-mono text-xs">${v.pcv != null ? v.pcv + '/' + Math.round(v.acv) : '—'}</td><td class="py-1.5 pr-2 text-right font-mono text-xs">${fmt(v.likes)}</td><td class="py-1.5 text-right font-mono text-xs">+${v.subs || 0}</td></tr>`).join('');
-    h += `<div id="my-g8">${myGroup('🎬', '動画ごとの数字', 'この期間に再生が多い30本')}</div>${myCard('', `<div class="flex flex-wrap gap-1.5 mb-2"><span class="text-[11px] text-muted">並び替え：</span>${Object.entries(VS).map(([k, [l]]) => `<button class="chip border border-line rounded-full px-2.5 py-0.5 text-[11px] font-bold" data-myvsort="${k}" aria-pressed="${vs === k}">${l}</button>`).join('')}</div>
+    h += `<div id="my-g8">${myGroup('🎬', '動画ごとの数字', `この期間に再生があった${list.length}本（並び替えると上から${Math.min(shownN, list.length)}本を表示）`)}</div>${myCard('', `<div class="flex flex-wrap gap-1.5 mb-2"><span class="text-[11px] text-muted">並び替え：</span>${Object.entries(VS).map(([k, [l]]) => `<button class="chip border border-line rounded-full px-2.5 py-0.5 text-[11px] font-bold" data-myvsort="${k}" aria-pressed="${vs === k}">${l}</button>`).join('')}</div>
       <div class="overflow-x-auto"><table class="w-full min-w-[680px]"><thead><tr class="text-[10px] text-muted text-left"><th>形式</th><th>タイトル</th><th class="text-right">再生</th><th class="text-right">インプ</th><th class="text-right">クリック率</th><th class="text-right">平均視聴率</th><th class="text-right">同接 最高/平均</th><th class="text-right">高評価</th><th class="text-right">登録</th></tr></thead><tbody>${rows}</tbody></table></div>
+      ${list.length > shownN ? `<button class="w-full mt-2 border border-line bg-panel rounded-xl py-2 text-xs font-bold" data-myvmore>さらに50本表示（${shownN} / ${list.length}本）</button>` : ''}
       <p class="text-[10px] text-muted mt-1">押すと、どこで見るのをやめたか（維持率グラフ）・同接の推移が見られます。表は横にスクロールできます</p>`)}<div class="h-4"></div>`;
   }
   return h;
@@ -3927,7 +3936,7 @@ function myClick(t, d) {
   if (d.mydays) { MY.days = d.mydays === 'all' ? 'all' : +d.mydays; render(); if (MY.tokens[MY.sel]) myFetch(MY.sel); return true; }
   if (d.myrefresh !== undefined) { myFetch(MY.sel); return true; }
   if (d.myvid) { openMyVideo(d.myvid); return true; }
-  if (d.myview) { MY.view = d.myview; render(); window.scrollTo(0, 0); if (d.myview === 'prof' && MY.sel) myVaultPull(MY.sel); return true; }
+  if (d.myview) { MY.view = d.myview; if (!MY.busy) MY.err = ''; render(); window.scrollTo(0, 0); if (d.myview === 'prof' && MY.sel) myVaultPull(MY.sel); return true; }
   if (d.myrefadd !== undefined || d.myrefdel !== undefined) {
     const cid = MY.sel, p = myProf(cid); p.refs = p.refs || [];
     if (d.myrefadd !== undefined) p.refs.push({ url: '', what: '', memo: '' });
@@ -3939,9 +3948,10 @@ function myClick(t, d) {
   if (d.myrank) { MY.rank = d.myrank; render(); return true; }
   if (d.mycfmt) { MY.cfmt = d.mycfmt; MY.cmore = 60; render(); return true; }
   if (d.mycmore !== undefined) { MY.cmore = (MY.cmore || 60) + 60; render(); return true; }
+  if (d.myvmore !== undefined) { MY.vmore = (MY.vmore || 50) + 50; render(); return true; }
   if (d.mycper) { MY.cper = d.mycper; render(); return true; }
   if (d.mymetric) { MY.metric = d.mymetric; render(); return true; }
-  if (d.myvsort) { MY.vsort = d.myvsort; render(); return true; }
+  if (d.myvsort) { MY.vsort = d.myvsort; MY.vmore = 50; render(); return true; }
   if (d.myeval) { openMyEval(d.myeval); return true; }
   if (d.myprompt !== undefined) { myPrompt(d.myprompt); return true; }
   if (d.mylogout) { myLogout(d.mylogout); toast('ログアウトしました'); render(); return true; }
@@ -4007,7 +4017,7 @@ $$('.tab:not(.mytab)').forEach(t => t.onclick = () => { S.tab = t.dataset.tab; S
 let qT; $('#q').addEventListener('input', e => { clearTimeout(qT); qT = setTimeout(() => { S.q = e.target.value.trim(); _titleIdx = null; S.chMore = 50; render(); }, 150); });
 
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-goto],[data-close],#mBack,[data-copy],[data-genre],[data-format],[data-cap],[data-kwsrc],[data-kwgenre],[data-kwformat],[data-kwperiod],[data-cttab],[data-arch],[data-archid],[data-more],[data-kcat],[data-tview],[data-chmore],[data-chan],[data-kback],[data-kopen],[data-tok],[data-clipview],[data-cliprange],[data-clipfmt],[data-clipch],[data-gmode],[data-ggenre],[data-cgenre],[data-game],[data-classic],[data-vid],[data-mytab],[data-myacct],[data-mylogin],[data-mydays],[data-myvid],[data-myprompt],[data-mydel],[data-myopen],[data-mymove],[data-myurladd],[data-myprofuse],[data-mycmore],[data-myrefresh],[data-mysetup],[data-myview],[data-mycfmt],[data-myeval],[data-myrank],[data-myrefadd],[data-myrefdel],[data-mycper],[data-mylogout],[data-mymetric],[data-myvsort]');
+  const t = e.target.closest('[data-goto],[data-close],#mBack,[data-copy],[data-genre],[data-format],[data-cap],[data-kwsrc],[data-kwgenre],[data-kwformat],[data-kwperiod],[data-cttab],[data-arch],[data-archid],[data-more],[data-kcat],[data-tview],[data-chmore],[data-chan],[data-kback],[data-kopen],[data-tok],[data-clipview],[data-cliprange],[data-clipfmt],[data-clipch],[data-gmode],[data-ggenre],[data-cgenre],[data-game],[data-classic],[data-vid],[data-mytab],[data-myacct],[data-mylogin],[data-mydays],[data-myvid],[data-myprompt],[data-mydel],[data-myopen],[data-mymove],[data-myurladd],[data-myprofuse],[data-mycmore],[data-myvmore],[data-myrefresh],[data-mysetup],[data-myview],[data-mycfmt],[data-myeval],[data-myrank],[data-myrefadd],[data-myrefdel],[data-mycper],[data-mylogout],[data-mymetric],[data-myvsort]');
   if (!t) return;
   const d = t.dataset;
   if (myClick(t, d)) return;
