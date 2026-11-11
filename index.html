@@ -2934,7 +2934,7 @@ async function myKeep() {
   } finally { _keepBusy = false; }
 }
 // 前に取った数字が3時間より古ければ、取り直す
-function myFetchIfOld(cid) { const d = myCache(cid), t = MY.tokens[cid]; if (t && t.exp > Date.now() && !MY.busy && (!d || !d.ctype || (d.dataVer || 0) < 5 || Date.now() - d.at > 3 * 3600e3)) myFetch(cid); }
+function myFetchIfOld(cid) { const d = myCache(cid), t = MY.tokens[cid]; if (t && t.exp > Date.now() && !MY.busy && (!d || !d.ctype || (d.dataVer || 0) < 6 || Date.now() - d.at > 3 * 3600e3)) myFetch(cid); }
 // 保管庫から、自己プロデュースの入力と、AIの総評を読む（どの端末でも同じ内容にする）
 const _profTimer = {};
 async function myVaultPull(cid) {
@@ -3060,7 +3060,7 @@ async function myFetch(cid) {
   // 動画ごとの数字：全部の動画を取る
   // （YouTubeの「上位の動画」は200本までしか返さないので、アップロード一覧から全部のIDを取り、200本ずつ指定して頼む）
   const vr = [], ctype = d.ctype, privOf = {};
-  d.dataVer = 5;   // データの形の版（古い形のまま残っている端末は、すぐ取り直す）
+  d.dataVer = 6;   // データの形の版（古い形のまま残っている端末は、すぐ取り直す）
   try {
     const ids = []; let pt = '';
     for (let i = 0; i < 100; i++) {
@@ -3068,7 +3068,13 @@ async function myFetch(cid) {
       const j = await myApi(tok, 'https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails,status&maxResults=50&playlistId=UU' + cid.slice(2) + (pt ? '&pageToken=' + pt : ''));
       (j.items || []).forEach(x => { const id = x.contentDetails.videoId; if (!(id in privOf)) ids.push(id); privOf[id] = x.status && x.status.privacyStatus; }); pt = j.nextPageToken; if (!pt) break;   // YouTubeは同じ動画を2回返すことがあるので重ねない
     }
-    d.allIds = ids.length; d.pubCount = ids.filter(id => privOf[id] === 'public').length;
+    // アップロード一覧から漏れる動画がある（プレミア公開・一部のショートや配信）ので、
+    // アナリティクスの「その年に再生があった動画」（1年ごとに上位200本）からも拾って足す
+    MY.busy = '一覧から漏れている動画を探しています…'; render();
+    const y0 = +myDate(start).slice(0, 4), y1 = +myDate(end).slice(0, 4), yq = [];
+    for (let y = y0; y <= y1; y++) { const s = new Date(Math.max(+start, Date.parse(y + '-01-01T00:00:00+09:00'))), e = new Date(Math.min(+end, Date.parse(y + '-12-31T00:00:00+09:00'))); if (s <= e) yq.push(R({ dimensions: 'video', metrics: 'views', sort: '-views', maxResults: 200 }, s, e).catch(() => null)); }
+    (await Promise.all(yq)).forEach(j => j && myRows(j).forEach(r => { if (!(r.video in privOf)) { ids.push(r.video); privOf[r.video] = null; } }));
+    d.allIds = ids.length;
     const VM = 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,likes,comments,shares';
     const parts = (n) => { const a = []; for (let i = 0; i < ids.length; i += n) a.push(ids.slice(i, i + n)); return a; };
     MY.busy = `動画ごとの数字を取得中…（${ids.length}本）`; render();
@@ -3102,6 +3108,9 @@ async function myFetch(cid) {
           fmt: ctype[v.video] || myFmtGuess(x && x.liveStreamingDetails, dur), dur, views: v.views, min: v.estimatedMinutesWatched, avd: v.averageViewDuration, avp: v.averageViewPercentage,
           subs: v.subscribersGained, likes: v.likes, comments: v.comments, shares: v.shares, priv: x ? priv : 'gone', mem: MEM.test(title) }; })
         .filter(v => v.priv !== 'gone' && v.priv !== 'private' && (v.priv !== 'unlisted' || v.mem));  // gone＝削除済み
+      // 本数（公開中・出していない限定公開と非公開）
+      const st = {}; Object.values(info).forEach(x => { const k = x.status.privacyStatus; st[k] = (st[k] || 0) + 1; });
+      d.pubCount = d.videos.filter(v => v.priv === 'public').length; d.hiddenCount = { unlisted: (st.unlisted || 0) - d.videos.filter(v => v.priv === 'unlisted').length, private: st.private || 0 };
     } catch (e) { errs.push('動画の情報：' + e.message); }
     // 配信の最高同接・平均同接（YouTubeの決まりで、1本ずつ頼む必要がある。5本ずつ同時に）
     // 同接は新しい配信30本（前に取った同接は使い回す。終わった配信の同接は変わらないため）
@@ -3227,7 +3236,7 @@ function renderMy() {
   const tok = MY.tokens[a.cid], live = tok && tok.exp > Date.now();
   const d = myCache(a.cid), pub = myPub(a.cid);
   // 古い形のデータ（動画30本だけなど）が残っている端末は、ログイン中ならすぐ取り直す
-  if (live && !MY.busy && d && (d.dataVer || 0) < 5) setTimeout(() => myFetchIfOld(a.cid), 0);
+  if (live && !MY.busy && d && (d.dataVer || 0) < 6) setTimeout(() => myFetchIfOld(a.cid), 0);
   // ログイン状態
   // ログイン状態：1行にまとめる（日数の切り替えは「📊 数字」のときだけ）
   const ago = d ? new Date(d.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
@@ -3362,7 +3371,7 @@ function myContentHtml(cid, d, pub) {
       ${Object.entries(RK).map(([k, r]) => `<button class="chip border border-line rounded-full px-2.5 py-0.5 text-[11px] font-bold" data-myrank="${k}" aria-pressed="${(MY.rank || 'score') === k}">${r[0]}</button>`).join('')}</div>
     ${top.map(([v, x], i) => `<button class="w-full flex items-center gap-2 py-1.5 border-t border-line text-left clickable" data-myeval="${esc(v.id)}"><span class="w-6 text-center font-black ${i < 3 ? 'text-amber' : 'text-muted'}">${i + 1}</span><img src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg" class="w-16 rounded shrink-0" alt="" loading="lazy"><span class="flex-1 min-w-0 text-xs line-clamp-2">${MY_FMT[v.fmt] ? MY_FMT[v.fmt].split(' ')[0] + ' ' : ''}${esc(v.title)}</span><span class="font-mono font-bold text-sm shrink-0">${rk[2](x)}</span></button>`).join('') || '<p class="text-xs text-muted">まだありません</p>'}</div>`;
   return `${perBar}<div class="flex items-center gap-1.5 mb-3 scroll-x -mx-3 px-3 sm:mx-0 sm:px-0 sm:flex-wrap"><span class="text-xs font-bold text-muted mr-1 shrink-0">🎞 形式</span>${chips}</div>${rank}
-    ${d && d.pubCount ? `<p class="text-[11px] font-bold mb-1 ${allNoPer.length >= d.pubCount ? 'text-lime' : 'text-amber'}">📦 YouTubeで公開中の動画 ${d.pubCount.toLocaleString()}本／ここに出ている動画 ${allNoPer.length.toLocaleString()}本（メンバー限定を含む・${new Date(d.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}取得）</p>` : MY.tokens[MY.sel] ? '' : `<p class="text-[11px] text-amber font-bold mb-1">🔒 ログインしていないので、公開の数字で分かる分（最近の動画）だけを出しています。ログインすると全部の動画が出ます</p>`}
+    ${d && d.pubCount ? `<p class="text-[11px] font-bold mb-1 ${allNoPer.length >= d.pubCount ? 'text-lime' : 'text-amber'}">📦 公開中の動画 ${d.pubCount.toLocaleString()}本をすべて表示中（ここに出ている ${allNoPer.length.toLocaleString()}本はメンバー限定を含む${d.hiddenCount ? `。限定公開 ${d.hiddenCount.unlisted}本・非公開 ${d.hiddenCount.private}本は出していません` : ""}・${new Date(d.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}取得）</p>` : MY.tokens[MY.sel] ? '' : `<p class="text-[11px] text-amber font-bold mb-1">🔒 ログインしていないので、公開の数字で分かる分（最近の動画）だけを出しています。ログインすると全部の動画が出ます</p>`}
     <p class="text-[11px] text-muted mb-2">押すと、その1本のAIの評価（点数・良かった点・課題・タイトル案・サムネ・説明欄の直し方）が見られます。</p>
     <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">${list.slice(0, MY.cmore || 60).map(card).join('') || '<p class="text-sm text-muted">まだありません</p>'}</div>
     ${list.length > (MY.cmore || 60) ? `<button class="w-full mt-3 border border-line bg-panel rounded-xl py-2.5 text-sm font-bold" data-mycmore>さらに60本表示（${MY.cmore || 60} / ${list.length}本）</button>` : `<p class="text-[11px] text-muted mt-2">${list.length}本を表示しています</p>`}`;
@@ -3482,7 +3491,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-15';
+const MY_VER = '11/11-16';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ', SHORTS_FEED:'ショートのフィード', IMMERSIVE_LIVE_FEED:'ライブのフィード' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明', DIRECT_SYSTEM_ACTIVITY_DIALOG:'スマホの共有メニュー', FACEBOOK_MESSENGER:'Facebookメッセンジャー', INSTAGRAM:'Instagram', TIKTOK:'TikTok' };
