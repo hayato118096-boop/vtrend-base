@@ -2934,7 +2934,7 @@ async function myKeep() {
   } finally { _keepBusy = false; }
 }
 // 前に取った数字が3時間より古ければ、取り直す
-function myFetchIfOld(cid) { const d = myCache(cid), t = MY.tokens[cid]; if (t && t.exp > Date.now() && !MY.busy && (!d || !d.ctype || (d.dataVer || 0) < 3 || Date.now() - d.at > 3 * 3600e3)) myFetch(cid); }
+function myFetchIfOld(cid) { const d = myCache(cid), t = MY.tokens[cid]; if (t && t.exp > Date.now() && !MY.busy && (!d || !d.ctype || (d.dataVer || 0) < 4 || Date.now() - d.at > 3 * 3600e3)) myFetch(cid); }
 // 保管庫から、自己プロデュースの入力と、AIの総評を読む（どの端末でも同じ内容にする）
 const _profTimer = {};
 async function myVaultPull(cid) {
@@ -3060,13 +3060,13 @@ async function myFetch(cid) {
   // 動画ごとの数字：全部の動画を取る
   // （YouTubeの「上位の動画」は200本までしか返さないので、アップロード一覧から全部のIDを取り、200本ずつ指定して頼む）
   const vr = [], ctype = d.ctype, privOf = {};
-  d.dataVer = 3;   // データの形の版（古い形のまま残っている端末は、すぐ取り直す）
+  d.dataVer = 4;   // データの形の版（古い形のまま残っている端末は、すぐ取り直す）
   try {
     const ids = []; let pt = '';
     for (let i = 0; i < 100; i++) {
       MY.busy = `動画の一覧を取得中…（${ids.length}本）`; render();
       const j = await myApi(tok, 'https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails,status&maxResults=50&playlistId=UU' + cid.slice(2) + (pt ? '&pageToken=' + pt : ''));
-      (j.items || []).forEach(x => { ids.push(x.contentDetails.videoId); privOf[x.contentDetails.videoId] = x.status && x.status.privacyStatus; }); pt = j.nextPageToken; if (!pt) break;
+      (j.items || []).forEach(x => { const id = x.contentDetails.videoId; if (!(id in privOf)) ids.push(id); privOf[id] = x.status && x.status.privacyStatus; });   // YouTubeは同じ動画を2回返すことがあるので重ねない pt = j.nextPageToken; if (!pt) break;
     }
     d.allIds = ids.length; d.pubCount = ids.filter(id => privOf[id] === 'public').length;
     const VM = 'views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained,likes,comments,shares';
@@ -3227,7 +3227,7 @@ function renderMy() {
   const tok = MY.tokens[a.cid], live = tok && tok.exp > Date.now();
   const d = myCache(a.cid), pub = myPub(a.cid);
   // 古い形のデータ（動画30本だけなど）が残っている端末は、ログイン中ならすぐ取り直す
-  if (live && !MY.busy && d && (d.dataVer || 0) < 3) setTimeout(() => myFetchIfOld(a.cid), 0);
+  if (live && !MY.busy && d && (d.dataVer || 0) < 4) setTimeout(() => myFetchIfOld(a.cid), 0);
   // ログイン状態
   // ログイン状態：1行にまとめる（日数の切り替えは「📊 数字」のときだけ）
   const ago = d ? new Date(d.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
@@ -3273,8 +3273,8 @@ const myVids = (d, pub) => {
   auto.forEach(v => { if (!have.has(v.id) && !pubIds.has(v.id)) { out.push(v); have.add(v.id); } });
   (pub ? pub.videos : []).forEach(v => { if (!have.has(v.id)) { out.push({ ...v, fmt: v.fmt === 'stream' ? myFmtGuess(true, v.dur) : v.fmt }); have.add(v.id); } });
   // ログインして取ったYouTube自身の分類があれば、それを正とする（公開の数字・自動更新の分も直す）
-  const ct = (d && d.ctype) || {};
-  return out.map(v => ct[v.id] && ct[v.id] !== v.fmt ? { ...v, fmt: ct[v.id] } : v);
+  const ct = (d && d.ctype) || {}, seen = new Set();
+  return out.filter(v => !seen.has(v.id) && seen.add(v.id)).map(v => ct[v.id] && ct[v.id] !== v.fmt ? { ...v, fmt: ct[v.id] } : v);
 };
 
 // ---- 総評（チャンネル全体：入力した内容・投稿した内容・概要欄・説明欄・アイコン・サムネイル） ----
@@ -3482,7 +3482,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-13';
+const MY_VER = '11/11-14';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ', SHORTS_FEED:'ショートのフィード', IMMERSIVE_LIVE_FEED:'ライブのフィード' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明', DIRECT_SYSTEM_ACTIVITY_DIALOG:'スマホの共有メニュー', FACEBOOK_MESSENGER:'Facebookメッセンジャー', INSTAGRAM:'Instagram', TIKTOK:'TikTok' };
