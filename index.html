@@ -170,10 +170,15 @@ function spark(arr, w=72, h=22) {
 }
 /* リンク：スマホは開く、PCはURLとコピー */
 function linkBox(url, label = 'YouTubeで開く') {
-  const open = TOUCH ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="block text-center bg-neon text-white font-bold rounded-lg px-4 py-2.5 text-sm mb-2">▶ ${esc(label)}</a>` : '';
+  const isYt = /^https:\/\/(www\.|m\.)?(youtube\.com|youtu\.be)\//.test(url);
+  // Wixの中：YouTube本体はWixの決まりで開けない。動画は埋め込み用の再生ページで見られるので、そう書いて、URLのコピーを目立たせる
+  const open = IN_FRAME && isYt
+    ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="block text-center bg-neon text-white font-bold rounded-lg px-4 py-2.5 text-sm mb-1">▶ ${/watch\?v=|youtu\.be\/|\/shorts\//.test(url) ? 'ここで動画を見る' : esc(label)}</a>
+      <p class="text-[11px] text-amber font-bold mb-2">⚠️ Wixの中から開いた画面は、Wixの決まりでYouTube本体に入れません。YouTubeで開くときは、下の「📋 コピー」を押して、ブラウザのアドレスバーに貼り付けてください。</p>`
+    : TOUCH ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="block text-center bg-neon text-white font-bold rounded-lg px-4 py-2.5 text-sm mb-2">▶ ${esc(label)}</a>` : '';
   return `${open}<div class="flex gap-2">
     <input readonly value="${esc(url)}" class="flex-1 min-w-0 bg-void border border-line rounded-lg px-2 py-2 text-xs font-mono" data-selectall>
-    <button class="shrink-0 ${TOUCH ? 'border border-line' : 'bg-neon text-white'} font-bold rounded-lg px-3 text-xs" data-copy="${esc(url)}">📋 コピー</button>
+    <button class="shrink-0 ${IN_FRAME && isYt ? 'bg-amber text-white' : TOUCH ? 'border border-line' : 'bg-neon text-white'} font-bold rounded-lg px-3 text-xs" data-copy="${esc(url)}" data-copymsg="URLをコピーしました。ブラウザのアドレスバーに貼り付けてください">📋 コピー</button>
   </div>`;
 }
 function miniLink(url, text) {
@@ -2934,7 +2939,7 @@ async function myKeep() {
   } finally { _keepBusy = false; }
 }
 // 前に取った数字が3時間より古ければ、取り直す
-function myFetchIfOld(cid) { const d = myCache(cid), t = MY.tokens[cid]; if (t && t.exp > Date.now() && !MY.busy && (!d || !d.ctype || (d.dataVer || 0) < 7 || Date.now() - d.at > 3 * 3600e3)) myFetch(cid); }
+function myFetchIfOld(cid) { const d = myCache(cid), t = MY.tokens[cid]; if (t && t.exp > Date.now() && !MY.busy && (!d || !d.ctype || (d.dataVer || 0) < 8 || Date.now() - d.at > 3 * 3600e3)) myFetch(cid); }
 // 保管庫から、自己プロデュースの入力と、AIの総評を読む（どの端末でも同じ内容にする）
 const _profTimer = {};
 async function myVaultPull(cid) {
@@ -3051,6 +3056,8 @@ async function myFetch(cid) {
     src: g.src ? myRows(g.src) : [], age: g.age ? myRows(g.age) : [], sub: g.sub ? myRows(g.sub) : [], videos: [],
     kw: g.kw ? myRows(g.kw) : [], rel: g.rel ? myRows(g.rel) : [], ext: g.ext ? myRows(g.ext) : [],
     dev: g.dev ? myRows(g.dev) : [], geo: g.geo ? myRows(g.geo) : [], loc: g.loc ? myRows(g.loc) : [], shr: g.shr ? myRows(g.shr) : [], ctype: {} };
+  // YouTubeのアナリティクスは2日ほど遅れて確定するので、実際にあるデータの最後の日を覚えておく
+  d.dataEnd = d.daily.length ? d.daily[d.daily.length - 1].day : d.range[1];
   // 関連動画（どの動画のおすすめから来たか）のタイトルを付ける
   if (d.rel.length) { try { const j = await myApi(tok, 'https://www.googleapis.com/youtube/v3/videos?part=snippet&id=' + d.rel.map(r => r.insightTrafficSourceDetail).join(','));
     const t = Object.fromEntries((j.items || []).map(x => [x.id, { title: x.snippet.title, ch: x.snippet.channelTitle, own: x.snippet.channelId === cid }]));
@@ -3060,7 +3067,7 @@ async function myFetch(cid) {
   // 動画ごとの数字：全部の動画を取る
   // （YouTubeの「上位の動画」は200本までしか返さないので、アップロード一覧から全部のIDを取り、200本ずつ指定して頼む）
   const vr = [], ctype = d.ctype, privOf = {};
-  d.dataVer = 7;   // データの形の版（古い形のまま残っている端末は、すぐ取り直す）
+  d.dataVer = 8;   // データの形の版（古い形のまま残っている端末は、すぐ取り直す）
   try {
     const ids = []; let pt = '';
     for (let i = 0; i < 100; i++) {
@@ -3106,7 +3113,8 @@ async function myFetch(cid) {
         const priv = x && x.status ? x.status.privacyStatus : 'public', title = x ? x.snippet.title : v.video;
         return { id: v.video, title, at: x ? (x.liveStreamingDetails && x.liveStreamingDetails.actualStartTime) || x.snippet.publishedAt : '',
           fmt: ctype[v.video] || myFmtGuess(x && x.liveStreamingDetails, dur), dur, views: v.views, min: v.estimatedMinutesWatched, avd: v.averageViewDuration, avp: v.averageViewPercentage,
-          subs: v.subscribersGained, likes: v.likes, comments: v.comments, shares: v.shares, priv: x ? priv : 'gone', mem: MEM.test(title) }; })
+          subs: v.subscribersGained, likes: v.likes, comments: v.comments, shares: v.shares, priv: x ? priv : 'gone', mem: MEM.test(title),
+          upcoming: !!(x && x.liveStreamingDetails && !x.liveStreamingDetails.actualStartTime) }; })
         .filter(v => v.priv === 'public');  // 公開中だけ。限定公開・非公開・削除済みは絶対に出さない
       // 本数（公開中・出していない限定公開と非公開）
       const st = {}; Object.values(info).forEach(x => { const k = x.status.privacyStatus; st[k] = (st[k] || 0) + 1; });
@@ -3236,7 +3244,7 @@ function renderMy() {
   const tok = MY.tokens[a.cid], live = tok && tok.exp > Date.now();
   const d = myCache(a.cid), pub = myPub(a.cid);
   // 古い形のデータ（動画30本だけなど）が残っている端末は、ログイン中ならすぐ取り直す
-  if (live && !MY.busy && d && (d.dataVer || 0) < 7) setTimeout(() => myFetchIfOld(a.cid), 0);
+  if (live && !MY.busy && d && (d.dataVer || 0) < 8) setTimeout(() => myFetchIfOld(a.cid), 0);
   // ログイン状態
   // ログイン状態：1行にまとめる（日数の切り替えは「📊 数字」のときだけ）
   const ago = d ? new Date(d.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
@@ -3359,21 +3367,22 @@ function myContentHtml(cid, d, pub) {
     return `<button class="text-left bg-panel border border-line rounded-xl overflow-hidden clickable flex sm:block" data-myeval="${esc(v.id)}">
       <div class="relative shrink-0 w-36 sm:w-full aspect-video bg-void"><img src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg" class="w-full h-full object-cover" alt="" loading="lazy">
         ${sc != null ? `<div class="absolute top-1 left-1 bg-panel/95 rounded-lg px-1.5 py-0.5 text-center leading-none"><span class="text-lg font-black font-mono ${myScoreCol(sc)}">${sc}</span><span class="text-[9px] text-muted">点</span></div>` : ''}</div>
-      <div class="p-2 min-w-0 flex-1"><div class="text-[10px] text-muted">${MY_FMT[v.fmt] || ''}${v.mem || /メン限|メンバー限定/.test(v.title || '') ? '・<b class="text-amber">👑 メンバー限定</b>' : ''}${v.at && v.at.length > 10 ? '・' + myWhen(v.at) : ''}</div>
+      <div class="p-2 min-w-0 flex-1"><div class="text-[10px] text-muted">${MY_FMT[v.fmt] || ''}${v.upcoming ? '・<b class="text-neon">📅 配信予定</b>' : ''}${v.mem || /メン限|メンバー限定/.test(v.title || '') ? '・<b class="text-amber">👑 メンバー限定</b>' : ''}${v.at && v.at.length > 10 ? '・' + myWhen(v.at) : ''}</div>
         <div class="text-xs font-bold line-clamp-2 word-break">${esc(v.title)}</div>
         <div class="text-[11px] text-muted mt-0.5">再生 ${fmt(v.views)}${v.likes != null ? '・高評価 ' + fmt(v.likes) : ''}${v.imp != null ? '・インプ ' + fmt(v.imp) : ''}</div>
         ${myDots(v)}
         ${ev && ev.first ? `<div class="text-[11px] mt-1 line-clamp-2">${esc(ev.first[0])}</div>` : '<div class="text-[11px] text-muted mt-1">AIの評価はまだありません</div>'}
         ${myDeepOf(v.id) ? '<div class="text-[10px] font-bold text-pink mt-1">🔍 中身の分析あり（見どころ・盛り上がり・切り抜き）</div>' : myRaw(v.id) && !myRaw(v.id).skip ? `<div class="text-[10px] font-bold text-neon mt-1">🤖 AIが映像を分析中（${myRaw(v.id).done}/${myRaw(v.id).chunks}）</div>` : myGameOf(v) ? '<div class="text-[10px] font-bold text-neon mt-1">🎮 ゲームの見どころあり</div>' : ''}</div></button>`; };
   // ランキング（上位5本）
-  const RK = { score: ['評価点', v => items[v.id] ? items[v.id].score : null, x => x + '点'], views: ['再生', v => v.views, x => fmt(x) + '回'], like: ['高評価率', v => v.views >= 50 && v.likes != null ? v.likes / v.views * 100 : null, x => x.toFixed(1) + '%'], ...(all.some(v => v.imp != null) ? { ctr: ['クリック率', v => v.ctr, x => x.toFixed(1) + '%'] } : {}) };
+  const evMade = (MY_EVAL[cid] && MY_EVAL[cid].made) || '';
+  const RK = { score: ['評価点（' + (evMade ? evMade.slice(5).replace('-', '/').replace(/\/0/, '/') + 'の見本' : '見本') + '）', v => items[v.id] ? items[v.id].score : null, x => x + '点'], views: ['再生', v => v.views, x => fmt(x) + '回'], like: ['高評価率', v => v.views >= 50 && v.likes != null ? v.likes / v.views * 100 : null, x => x.toFixed(1) + '%'], ...(all.some(v => v.imp != null) ? { ctr: ['クリック率', v => v.ctr, x => x.toFixed(1) + '%'] } : {}) };
   const rk = RK[MY.rank] || RK.score, top = list.map(v => [v, rk[1](v)]).filter(x => x[1] != null).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const rank = `<div class="bg-panel border border-line rounded-xl p-3 glow mb-4"><div class="flex flex-wrap items-center gap-2 mb-2"><span class="font-black text-sm">🏆 ランキング</span>
       ${Object.entries(RK).map(([k, r]) => `<button class="chip border border-line rounded-full px-2.5 py-0.5 text-[11px] font-bold" data-myrank="${k}" aria-pressed="${(MY.rank || 'score') === k}">${r[0]}</button>`).join('')}</div>
     ${top.map(([v, x], i) => `<button class="w-full flex items-center gap-2 py-1.5 border-t border-line text-left clickable" data-myeval="${esc(v.id)}"><span class="w-6 text-center font-black ${i < 3 ? 'text-amber' : 'text-muted'}">${i + 1}</span><img src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg" class="w-16 rounded shrink-0" alt="" loading="lazy"><span class="flex-1 min-w-0 text-xs line-clamp-2">${MY_FMT[v.fmt] ? MY_FMT[v.fmt].split(' ')[0] + ' ' : ''}${esc(v.title)}</span><span class="font-mono font-bold text-sm shrink-0">${rk[2](x)}</span></button>`).join('') || '<p class="text-xs text-muted">まだありません</p>'}</div>`;
   return `${perBar}<div class="flex items-center gap-1.5 mb-3 scroll-x -mx-3 px-3 sm:mx-0 sm:px-0 sm:flex-wrap"><span class="text-xs font-bold text-muted mr-1 shrink-0">🎞 形式</span>${chips}</div>${rank}
     ${d && d.pubCount ? `<p class="text-[11px] font-bold mb-1 ${allNoPer.length >= d.pubCount ? 'text-lime' : 'text-amber'}">📦 公開中の動画 ${d.pubCount.toLocaleString()}本をすべて表示中（ここに出ている ${allNoPer.length.toLocaleString()}本${d.hiddenCount ? `。限定公開 ${d.hiddenCount.unlisted}本・非公開 ${d.hiddenCount.private}本は出していません` : ""}・${new Date(d.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}取得）</p>` : MY.tokens[MY.sel] ? '' : `<p class="text-[11px] text-amber font-bold mb-1">🔒 ログインしていないので、公開の数字で分かる分（最近の動画）だけを出しています。ログインすると全部の動画が出ます</p>`}
-    <p class="text-[11px] text-muted mb-2">押すと、その1本のAIの評価（点数・良かった点・課題・タイトル案・サムネ・説明欄の直し方）が見られます。</p>
+    <p class="text-[11px] text-muted mb-2">押すと、その1本のAIの評価（点数・良かった点・課題・タイトル案・サムネ・説明欄の直し方）が見られます。<b class="text-amber">点数が付いている動画の評価は、${evMade ? evMade.slice(5).replace('-', '/').replace(/\/0/, '/') : ''}に公開の数字だけで作った見本です</b>（1本ずつの自動評価はまだありません）。</p>
     <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">${list.slice(0, MY.cmore || 60).map(card).join('') || '<p class="text-sm text-muted">まだありません</p>'}</div>
     ${list.length > (MY.cmore || 60) ? `<button class="w-full mt-3 border border-line bg-panel rounded-xl py-2.5 text-sm font-bold" data-mycmore>さらに60本表示（${MY.cmore || 60} / ${list.length}本）</button>` : `<p class="text-[11px] text-muted mt-2">${list.length}本を表示しています</p>`}`;
 }
@@ -3385,7 +3394,7 @@ function myItemHtml(cid, v, d, pub) {
   const head = `<div class="flex gap-3 items-start"><img src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg" class="w-32 sm:w-40 rounded-lg border border-line shrink-0" alt="">
     <div class="min-w-0"><div class="text-[11px] text-muted">${MY_FMT[v.fmt] || ''}${v.dur ? '・' + mySec(v.dur) : ''}${v.at && v.at.length > 10 ? '・' + myWhen(v.at) : ''}</div>
     <div class="font-bold text-sm leading-snug word-break">${esc(v.title)}</div>
-    <div class="text-[11px] text-muted mt-1">再生 ${fmt(v.views)}回${v.likes != null ? '・高評価 ' + v.likes : ''}${v.imp != null ? '・インプレッション ' + fmt(v.imp) + '・クリック率 ' + myF1(v.ctr) + '%' : '・インプレッション 🔒ログインで表示'}${v.pcv != null ? '・最高同接 ' + v.pcv : ''}</div></div></div>`;
+    <div class="text-[11px] text-muted mt-1">再生 ${fmt(v.views)}回${v.likes != null ? '・高評価 ' + v.likes : ''}${v.imp != null ? '・インプレッション ' + fmt(v.imp) + '・クリック率 ' + myF1(v.ctr) + '%' : '・インプレッション 🔒ログインで表示'}${v.pcv != null ? '・最高同接 ' + v.pcv : ''}</div>${ev ? `<div class="text-[10px] text-amber font-bold mt-1">🤖 下のAIの評価は、${esc(((MY_EVAL[cid] && MY_EVAL[cid].made) || '').slice(5).replace('-', '/').replace(/\/0/, '/'))}に公開の数字だけで作った見本です</div>` : ''}</div></div>`;
   if (!ev) return head + myDeepHtml(v) + `<p class="text-xs text-muted mt-3 mb-2">点数つきの評価（良かった点・課題・タイトル案）はまだありません。依頼文をAIに貼り付けると評価をもらえます。</p>${btn}<div class="mt-3">${linkBox('https://www.youtube.com/watch?v=' + v.id)}</div>`;
   const base = myBase(v.fmt, 'game'), subs = (d && d.subs) || (pub && pub.subs);
   const cmp = base && base.n >= 5 ? `<div class="grid grid-cols-2 gap-2 mt-3">
@@ -3492,7 +3501,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-17';
+const MY_VER = '11/11-19';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ', SHORTS_FEED:'ショートのフィード', IMMERSIVE_LIVE_FEED:'ライブのフィード' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明', DIRECT_SYSTEM_ACTIVITY_DIALOG:'スマホの共有メニュー', FACEBOOK_MESSENGER:'Facebookメッセンジャー', INSTAGRAM:'Instagram', TIKTOK:'TikTok' };
@@ -3579,7 +3588,7 @@ function myNumbersHtml(d) {
   if (d.kw && d.kw.length) tips.push(`いちばん検索された言葉は「${d.kw[0].insightTrafficSourceDetail}」（${fmt(d.kw[0].views)}回）`);
   if (days.length >= 7) { const wd = [0, 0, 0, 0, 0, 0, 0], wn = [0, 0, 0, 0, 0, 0, 0]; days.forEach(x => { const k = new Date(x.day + 'T00:00:00+09:00').getDay(); wd[k] += x.views; wn[k]++; }); const avg = wd.map((v, i) => wn[i] ? v / wn[i] : 0), bi = avg.indexOf(Math.max(...avg)); tips.push(`よく見られている曜日は「${'日月火水木金土'[bi]}曜日」（1日平均 ${fmt(avg[bi])}回）`); }
   if (net != null) tips.push(`登録者は ${net >= 0 ? '+' : ''}${net}人（増えた ${t.subscribersGained}・減った ${t.subscribersLost}）`);
-  let h = `<div class="text-[11px] text-muted mb-2">期間：${esc(d.range[0])} 〜 ${esc(d.range[1])}（${d.all ? '全期間・' : ''}${d.days}日間）・取得 ${new Date(d.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}・サイトの版 ${MY_VER}</div>`;
+  let h = `<div class="text-[11px] text-muted mb-2">期間：${esc(d.range[0])} 〜 ${esc(d.dataEnd || d.range[1])}（YouTubeの集計は2日ほど遅れて確定するため、この日までの数字です・${d.all ? '全期間・' : ''}${d.days}日間）・取得 ${new Date(d.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' })}・サイトの版 ${MY_VER}</div>`;
   if (tips.length) h += `<div class="bg-neon/5 border border-neon/30 rounded-xl p-3 mb-3"><div class="font-black text-sm mb-1.5">👀 まずここだけ</div>${myUl(tips)}</div>`;
   h += myHealthHtml(d);
   // 見る順番の案内
@@ -3887,7 +3896,7 @@ async function myPromptText(vid, forAI = false) {
     const sumD = n => { const a = d.daily.slice(-n); return { v: a.reduce((s, x) => s + (+x.views || 0), 0), h: Math.round(a.reduce((s, x) => s + (+x.estimatedMinutesWatched || 0), 0) / 60), sub: a.reduce((s, x) => s + (+x.subscribersGained || 0) - (+x.subscribersLost || 0), 0) }; };
     const r28 = sumD(28), r90 = sumD(90), p28 = (() => { const a = d.daily.slice(-56, -28); return a.reduce((s, x) => s + (+x.views || 0), 0); })();
     const now = Date.now(), cntP = (n, f) => allV.filter(x => x.fmt === f && now - Date.parse(x.at) < n * DAY).length;
-    L.push('# 今の調子（直近の数字。分析ではこちらを重視してください）',
+    L.push('# 今の調子（直近の数字。分析ではこちらを重視してください。' + (d.dataEnd || '') + ' までのデータ。YouTubeの集計は2日ほど遅れます）',
       `- 直近28日：再生 ${r28.v}（その前の28日は ${p28}）／総再生時間 ${r28.h}時間／登録 ${r28.sub >= 0 ? '+' : ''}${r28.sub}`,
       `- 直近90日：再生 ${r90.v}／総再生時間 ${r90.h}時間／登録 ${r90.sub >= 0 ? '+' : ''}${r90.sub}`,
       `- 直近90日に出した数（分かる範囲）：配信 ${cntP(90, 'stream')}本・ショート ${cntP(90, 'short')}本・動画 ${cntP(90, 'video')}本`,
@@ -3906,7 +3915,7 @@ async function myPromptText(vid, forAI = false) {
     const byNew = [...byNewAll.slice(0, 40), ...top20].sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0));
     const yrs = {}; allV.forEach(x => { const y = (x.at || '').slice(0, 4) || '不明'; const o = yrs[y] = yrs[y] || { stream: [0, 0], short: [0, 0], video: [0, 0] }; if (o[x.fmt]) { o[x.fmt][0]++; o[x.fmt][1] += x.views || 0; } });
     L.push(`# 投稿したコンテンツのまとめ（数字が取れた ${allV.length}本。年ごと：本数／再生の合計）`, ...Object.keys(yrs).sort().reverse().map(y => `- ${y}年：` + ['stream', 'short', 'video'].map(f => `${MY_FMT[f].replace(/^\S+ /, '')} ${yrs[y][f][0]}本／${yrs[y][f][1]}回`).join('、')), '');
-    L.push('# 投稿したコンテンツ（新しい40本と、よく見られた20本。新しい順）', ...byNew.map(x => `- ${(MY_FMT[x.fmt] || '').replace(/^\S+ /, '')}｜${x.at && x.at.length > 10 ? new Date(x.at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year:'numeric', month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' }) : ''}｜${x.title}｜${x.dur ? mySec(x.dur) : ''}｜再生 ${x.views}${x.likes != null ? '｜高評価 ' + x.likes : ''}${x.imp != null ? '｜インプ ' + x.imp + '｜CTR ' + myF1(x.ctr) + '%' : ''}${x.avp != null ? '｜平均視聴率 ' + myF1(x.avp) + '%' : ''}${x.pcv != null ? '｜最高同接 ' + x.pcv : ''}｜サムネ https://i.ytimg.com/vi/${x.id}/mqdefault.jpg`), '');
+    L.push('# 投稿したコンテンツ（新しい40本と、よく見られた20本。新しい順）', ...byNew.map(x => `- ${(MY_FMT[x.fmt] || '').replace(/^\S+ /, '')}${x.upcoming ? '（配信予定・まだ始まっていない）' : ''}｜${x.at && x.at.length > 10 ? new Date(x.at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year:'numeric', month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' }) : ''}｜${x.title}｜${x.dur ? mySec(x.dur) : ''}｜再生 ${x.views}${x.likes != null ? '｜高評価 ' + x.likes : ''}${x.imp != null ? '｜インプ ' + x.imp + '｜CTR ' + myF1(x.ctr) + '%' : ''}${x.avp != null ? '｜平均視聴率 ' + myF1(x.avp) + '%' : ''}${x.pcv != null ? '｜最高同接 ' + x.pcv : ''}｜サムネ https://i.ytimg.com/vi/${x.id}/mqdefault.jpg`), '');
     // ログイン中なら、新しい8本の説明欄を取ってきて入れる
     let descs = []; const tk = MY.tokens[cid];
     if (tk && tk.exp > Date.now() && allV.length) { try { const ids8 = [...allV].sort((a, b) => (Date.parse(b.at) || 0) - (Date.parse(a.at) || 0)).slice(0, 8).map(x => x.id);
