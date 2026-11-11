@@ -3501,7 +3501,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-19';
+const MY_VER = '11/11-20';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ', SHORTS_FEED:'ショートのフィード', IMMERSIVE_LIVE_FEED:'ライブのフィード' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明', DIRECT_SYSTEM_ACTIVITY_DIALOG:'スマホの共有メニュー', FACEBOOK_MESSENGER:'Facebookメッセンジャー', INSTAGRAM:'Instagram', TIKTOK:'TikTok' };
@@ -4118,6 +4118,12 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal()
   setMode(); render();
   // Googleのログインから戻ってきたときは、そのままチャンネルの数字を取りに行く
   if (myPending) { const p = myPending; myPending = null; if (p.code) myVaultLogin(p.code, p.redirect, p.want); else myAfterLogin(p.r, p.want); }
+  // 新しい版が出ていたら自動で読み込み直す（Wixの中やスマホは前のページを覚えていて、古い版のままになりやすいため）
+  setTimeout(async () => { try {
+    // cache:'reload' で取り直すと、ブラウザが覚えているページも新しいものに置き換わる（そのあと読み込み直すと新しい版が出る）
+    const html = await (await fetch(location.href.split('#')[0], { cache: 'reload' })).text(), m = /const MY_VER = '([^']+)'/.exec(html);
+    if (m && m[1] !== MY_VER) { const k = 'vtb_reloaded_' + m[1]; if (!sessionStorage.getItem(k)) { sessionStorage.setItem(k, '1'); location.reload(); } }
+  } catch (e) {} }, 1500);
   // 保管庫でログインしているアカウントは、鍵が切れる前に自動で新しくする（ずっとログイン）
   if (MY_VAULT) { myKeep(); setInterval(myKeep, 4 * 60e3);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { myKeep(); if (S.tab === 'my' && MY.sel && MY.view !== 'home') myVaultPull(MY.sel); } }); }
