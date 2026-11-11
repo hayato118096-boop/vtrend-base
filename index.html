@@ -3181,6 +3181,9 @@ function myBase(fmtId, genre) {
 
 // ---- 画面 ----
 const MY_FMT = { stream:'🔴 配信', short:'📱 ショート', video:'🎬 動画' };
+// 日時の表示：今年のものは「11/6(金) 22:09」、去年より前は年も付ける「2019/11/30(土) 19:23」
+const myWhen = at => { const d = new Date(at), y = +new Date(Date.parse(at) + 9 * 3600e3).toISOString().slice(0, 4), now = +new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 4);
+  return d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', ...(y !== now ? { year: 'numeric' } : {}), month: 'numeric', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit' }); };
 const MY_CT = { SHORTS:'📱 ショート', LIVE_STREAM:'🔴 配信', VIDEO_ON_DEMAND:'🎬 動画', STORY:'ストーリー', UNSPECIFIED:'その他',
   // YouTubeアナリティクスは実際には次の名前で返してくる
   shorts:'📱 ショート', liveStream:'🔴 配信', videoOnDemand:'🎬 動画', story:'ストーリー', posts:'📝 投稿（コミュニティ）', unspecified:'その他', creatorContentTypeUnspecified:'その他（YouTubeが分類していない分）' };
@@ -3340,7 +3343,7 @@ function myContentHtml(cid, d, pub) {
     return `<button class="text-left bg-panel border border-line rounded-xl overflow-hidden clickable flex sm:block" data-myeval="${esc(v.id)}">
       <div class="relative shrink-0 w-36 sm:w-full aspect-video bg-void"><img src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg" class="w-full h-full object-cover" alt="" loading="lazy">
         ${sc != null ? `<div class="absolute top-1 left-1 bg-panel/95 rounded-lg px-1.5 py-0.5 text-center leading-none"><span class="text-lg font-black font-mono ${myScoreCol(sc)}">${sc}</span><span class="text-[9px] text-muted">点</span></div>` : ''}</div>
-      <div class="p-2 min-w-0 flex-1"><div class="text-[10px] text-muted">${MY_FMT[v.fmt] || ''}${v.mem || /メン限|メンバー限定/.test(v.title || '') ? '・<b class="text-amber">👑 メンバー限定</b>' : ''}${v.at && v.at.length > 10 ? '・' + new Date(v.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' }) : ''}</div>
+      <div class="p-2 min-w-0 flex-1"><div class="text-[10px] text-muted">${MY_FMT[v.fmt] || ''}${v.mem || /メン限|メンバー限定/.test(v.title || '') ? '・<b class="text-amber">👑 メンバー限定</b>' : ''}${v.at && v.at.length > 10 ? '・' + myWhen(v.at) : ''}</div>
         <div class="text-xs font-bold line-clamp-2 word-break">${esc(v.title)}</div>
         <div class="text-[11px] text-muted mt-0.5">再生 ${fmt(v.views)}${v.likes != null ? '・高評価 ' + fmt(v.likes) : ''}${v.imp != null ? '・インプ ' + fmt(v.imp) : ''}</div>
         ${myDots(v)}
@@ -3363,7 +3366,7 @@ function myItemHtml(cid, v, d, pub) {
   const ev = MY_EVAL[cid] && MY_EVAL[cid].items && MY_EVAL[cid].items[v.id];
   const btn = `<button class="border border-neon/60 text-neon rounded-lg px-3 py-2 text-xs font-bold" data-myprompt="${esc(v.id)}">📋 この動画のAI依頼文を作る</button>`;
   const head = `<div class="flex gap-3 items-start"><img src="https://i.ytimg.com/vi/${esc(v.id)}/mqdefault.jpg" class="w-32 sm:w-40 rounded-lg border border-line shrink-0" alt="">
-    <div class="min-w-0"><div class="text-[11px] text-muted">${MY_FMT[v.fmt] || ''}${v.dur ? '・' + mySec(v.dur) : ''}${v.at && v.at.length > 10 ? '・' + new Date(v.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' }) : ''}</div>
+    <div class="min-w-0"><div class="text-[11px] text-muted">${MY_FMT[v.fmt] || ''}${v.dur ? '・' + mySec(v.dur) : ''}${v.at && v.at.length > 10 ? '・' + myWhen(v.at) : ''}</div>
     <div class="font-bold text-sm leading-snug word-break">${esc(v.title)}</div>
     <div class="text-[11px] text-muted mt-1">再生 ${fmt(v.views)}回${v.likes != null ? '・高評価 ' + v.likes : ''}${v.imp != null ? '・インプレッション ' + fmt(v.imp) + '・クリック率 ' + myF1(v.ctr) + '%' : '・インプレッション 🔒ログインで表示'}${v.pcv != null ? '・最高同接 ' + v.pcv : ''}</div></div></div>`;
   if (!ev) return head + myDeepHtml(v) + `<p class="text-xs text-muted mt-3 mb-2">点数つきの評価（良かった点・課題・タイトル案）はまだありません。依頼文をAIに貼り付けると評価をもらえます。</p>${btn}<div class="mt-3">${linkBox('https://www.youtube.com/watch?v=' + v.id)}</div>`;
@@ -3472,7 +3475,7 @@ function myPublicHtml(p) {
 
 // ---- 📊 数字（ログイン後）：まとめ → 毎日の推移 → 入口 → 中身 → 視聴者 → 成長 ----
 // サイトの版（読み込み直せているかの確認用。直すたびに数字を上げる）
-const MY_VER = '11/11-11';
+const MY_VER = '11/11-12';
 const MY_DEV = { MOBILE:'📱 スマホ', DESKTOP:'💻 パソコン', TV:'📺 テレビ', TABLET:'タブレット', GAME_CONSOLE:'🎮 ゲーム機', UNKNOWN_PLATFORM:'不明' };
 const MY_LOC = { WATCH:'YouTubeの再生ページ', SHORTS:'ショートのフィード', CHANNEL:'チャンネルページ', BROWSE:'ホーム・登録チャンネル', SEARCH:'検索結果', EMBEDDED:'埋め込み（ほかのサイト）', EXTERNAL_APP:'外部アプリ', YT_OTHER:'YouTubeのその他', MOBILE:'スマホの再生ページ', SHORTS_FEED:'ショートのフィード', IMMERSIVE_LIVE_FEED:'ライブのフィード' };
 const MY_SHARE = { COPY_PASTE:'リンクのコピー', TWITTER:'X（Twitter）', LINE:'LINE', DISCORD:'Discord', FACEBOOK:'Facebook', WHATS_APP:'WhatsApp', REDDIT:'Reddit', EMAIL:'メール', ANDROID_MESSENGER:'メッセージ', IMESSAGE:'iMessage', TUMBLR:'Tumblr', OTHER:'その他', UNKNOWN:'不明', DIRECT_SYSTEM_ACTIVITY_DIALOG:'スマホの共有メニュー', FACEBOOK_MESSENGER:'Facebookメッセンジャー', INSTAGRAM:'Instagram', TIKTOK:'TikTok' };
@@ -3755,7 +3758,8 @@ async function myVideoDetail(cid, v) {
   if (ret.status === 'fulfilled') { const rows = myRows(ret.value);
     if (rows.length > 1) {
       v.ret = rows.map(r => r.audienceWatchRatio); v.rel = rows.map(r => r.relativeRetentionPerformance);
-      if (v.dur) v.first = v.ret[Math.min(v.ret.length - 1, Math.max(0, Math.round(60 / v.dur * 100) - 1))];
+      // 維持率は「長さの1%ごと」にしか取れないので、1分に一番近い点を使い、その地点（秒）も覚えておく（長い配信だと1%が1分より長い）
+      if (v.dur) { const k = Math.min(v.ret.length, Math.max(1, Math.round(60 / v.dur * 100))); v.first = v.ret[k - 1]; v.firstAt = Math.round(v.dur * k / 100); }
       // 一番大きく減った場所（3か所）
       v.drops = v.ret.slice(1).map((x, i) => [i + 1, v.ret[i] - x]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([i, dd]) => ({ at: v.dur ? v.dur * (i + 1) / 100 : null, pct: i + 1, drop: dd })).sort((a, b) => a.pct - b.pct);
     } }
@@ -3784,14 +3788,14 @@ function myVideoStats(v) {
   return `<div class="mb-3">
     ${row('① 見つけてもらう', [s('インプレッション', v.imp != null ? fmt(v.imp) : '—'), s('再生', fmt(v.views)), s('新しく来た人の目安', v.unsub != null ? myF1(v.unsub) + '%' : '—', null, '未登録の人の再生')])}
     ${row('② 押してもらう', [s('クリック率', v.ctr != null ? myF1(v.ctr) + '%' : '—', L(v.ctr, 2, 4), '平均は4〜5%')])}
-    ${row('③ 見続けてもらう', [s('平均視聴率', v.avp != null ? myF1(v.avp) + '%' : '—', L(v.avp, avpAim[0], avpAim[1])), s('冒頭1分の維持率', v.first != null ? myF1(v.first * 100) + '%' : '—', v.first != null ? L(v.first * 100, 50, 70) : null), s('平均視聴時間', mySec(v.avd))])}
+    ${row('③ 見続けてもらう', [s('平均視聴率', v.avp != null ? myF1(v.avp) + '%' : '—', L(v.avp, avpAim[0], avpAim[1])), s(v.firstAt && Math.abs(v.firstAt - 60) > 10 ? '冒頭' + myClock(v.firstAt) + 'の維持率' : '冒頭1分の維持率', v.first != null ? myF1(v.first * 100) + '%' : '—', v.first != null ? L(v.first * 100, 50, 70) : null), s('平均視聴時間', mySec(v.avd))])}
     ${row('④ 反応してもらう', [s('高評価', fmt(v.likes), null, v.views ? '高評価率 ' + myF1(v.likes / v.views * 100) + '%' : ''), s('コメント', fmt(v.comments)), ...(st ? [s('最高同接', v.pcv != null ? fmt(v.pcv) + '人' : '—'), s('平均同接', v.acv != null ? myF1(v.acv) + '人' : '—')] : [])])}
     ${row('⑤ ファンになってもらう', [s('登録者', '+' + (v.subs || 0), null, v.views ? '1,000再生あたり ' + myF1((v.subs || 0) / v.views * 1000) + '人' : '')])}
   </div>`;
 }
 function myVideoBody(v, live) {
   const st = v.fmt === 'stream';
-  let h = `<div class="text-sm font-bold mb-1 word-break">${esc(v.title)}</div><div class="text-[11px] text-muted mb-2">${MY_FMT[v.fmt] || ''}${v.dur ? '・' + mySec(v.dur) : ''}${v.at ? '・' + esc(new Date(v.at).toLocaleString('ja-JP', { month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit' })) : ''}</div>
+  let h = `<div class="text-sm font-bold mb-1 word-break">${esc(v.title)}</div><div class="text-[11px] text-muted mb-2">${MY_FMT[v.fmt] || ''}${v.dur ? '・' + mySec(v.dur) : ''}${v.at ? '・' + esc(myWhen(v.at)) : ''}</div>
     ${myVideoStats(v)}`;
   if (!live && !v.detail) return h + '<p class="text-xs text-muted">🔒 ログインすると、維持率グラフ・同接の推移・離れたタイミングが見られます</p>';
   if (!v.detail) return h + '<p class="text-xs text-neon animate-pulse">読み込み中…</p>';
@@ -3842,7 +3846,7 @@ async function myPromptText(vid, forAI = false) {
     L.push('# 入力データ', '- タイトル：' + v.title, '- 形式：' + (MY_FMT[v.fmt] || '').replace(/^\S+ /, ''), '- 配信時間/動画尺：' + (v.dur ? mySec(v.dur) : '不明'), '- 実施日時/時間帯：' + when, '- 総再生回数：' + (v.views ?? '不明'),
       ...(v.fmt === 'stream' ? ['- 最高同時視聴者数（最高同接）：' + (v.pcv ?? '不明'), '- 平均同時視聴者数（平均同接）：' + (v.acv != null ? myF1(v.acv) : '不明')] : []),
       '- インプレッション数：' + (v.imp ?? '不明'), '- インプレッションクリック率（CTR）：' + (v.ctr != null ? myF1(v.ctr) + '%' : '不明'),
-      '- 平均視聴維持率（%）および 冒頭1分間の維持率：' + (v.avp != null ? myF1(v.avp) + '%' : '不明') + ' ／ ' + (v.first != null ? myF1(v.first * 100) + '%' : '不明') + (v.avd != null ? '（平均視聴時間 ' + mySec(v.avd) + '）' : ''),
+      '- 平均視聴維持率（%）および 冒頭1分間の維持率：' + (v.avp != null ? myF1(v.avp) + '%' : '不明') + ' ／ ' + (v.first != null ? myF1(v.first * 100) + '%' + (v.firstAt && Math.abs(v.firstAt - 60) > 10 ? '（YouTubeの決まりで1分ちょうどは取れないため、' + myClock(v.firstAt) + '地点）' : '') : '不明') + (v.avd != null ? '（平均視聴時間 ' + mySec(v.avd) + '）' : ''),
       '- 新規視聴者の割合（%）：' + (v.unsub != null ? myF1(v.unsub) + '%（チャンネル未登録の人の再生の割合で代用）' : '不明'),
       '- チャンネル登録増加数 / 高評価数 / コメント数：' + [v.subs ?? '不明', v.likes ?? '不明', v.comments ?? '不明'].join(' / '),
       '- 同接推移・離脱が起きたタイミングのメモ：' + (memo.length ? memo.join('。') : '不明'),
